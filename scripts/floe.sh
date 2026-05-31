@@ -4,7 +4,9 @@ set -euo pipefail
 export LC_ALL=C
 
 FILE_TO_UPLOAD="${1:-}"
-SOURCE_FILE_PATH="$FILE_TO_UPLOAD"
+SOURCE_FILE_PATH=""
+REQUEST_MODE="upload"
+RENEW_FILE_ID=""
 CUSTOM_CHUNK_SIZE_MB=""
 EPOCHS=1
 PARALLEL_JOBS=1
@@ -31,6 +33,7 @@ declare -a CURL_AUTH_HEADERS=()
 
 API_BASE="${FLOE_API_BASE:-http://localhost:3001/v1/uploads}"
 READ_API_BASE="${FLOE_READ_API_BASE:-}"
+RENEW_BLOB_OBJECT_ID="${FLOE_BLOB_OBJECT_ID:-}"
 
 CURL_CONNECT_TIMEOUT_S="${FLOE_CURL_CONNECT_TIMEOUT_S:-5}"
 CURL_MAX_TIME_S="${FLOE_CURL_MAX_TIME_S:-240}"
@@ -309,6 +312,7 @@ show_help() {
   print_banner
   cat >&1 <<EOF
 Usage: $0 <file> [options]
+       $0 renew <fileId> [options]
 
 Options:
   -c, --chunk <mb>      Chunk size in MB (0.25 - 10)
@@ -328,6 +332,7 @@ Options:
       --wallet <addr>   Auth header: x-wallet-address (0x...)
       --owner <addr>    Auth header: x-owner-address (0x...)
       --target-chain <name> Destination chain for Tatum anchoring (base, polygon, etc.)
+      --blob-object-id <id> Blob object id for renewals that need an explicit mapping
   -h, --help            Show help
 EOF
   exit 0
@@ -337,7 +342,25 @@ if [[ -z "$FILE_TO_UPLOAD" || "$FILE_TO_UPLOAD" == "-h" || "$FILE_TO_UPLOAD" == 
   show_help
 fi
 
-shift
+if [[ "$FILE_TO_UPLOAD" == "renew" ]]; then
+  REQUEST_MODE="renew"
+  RENEW_FILE_ID="${2:-}"
+  if [[ -z "$RENEW_FILE_ID" || "$RENEW_FILE_ID" == "-h" || "$RENEW_FILE_ID" == "--help" ]]; then
+    show_help
+  fi
+  shift 2
+elif [[ "$FILE_TO_UPLOAD" == "upload" ]]; then
+  SOURCE_FILE_PATH="${2:-}"
+  FILE_TO_UPLOAD="$SOURCE_FILE_PATH"
+  if [[ -z "$FILE_TO_UPLOAD" || "$FILE_TO_UPLOAD" == "-h" || "$FILE_TO_UPLOAD" == "--help" ]]; then
+    show_help
+  fi
+  shift 2
+else
+  SOURCE_FILE_PATH="$FILE_TO_UPLOAD"
+  shift
+fi
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -c|--chunk) CUSTOM_CHUNK_SIZE_MB="$2"; shift ;;
@@ -357,13 +380,12 @@ while [[ $# -gt 0 ]]; do
     --wallet) WALLET_ADDRESS="$2"; shift ;;
     --owner) OWNER_ADDRESS="$2"; shift ;;
     --target-chain) TARGET_CHAIN="$2"; shift ;;
+    --blob-object-id) RENEW_BLOB_OBJECT_ID="$2"; shift ;;
     -h|--help) show_help ;;
     *) print_err "Unknown option: $1"; exit 1 ;;
   esac
   shift
 done
-
-[[ ! -f "$FILE_TO_UPLOAD" ]] && print_err "File not found: $FILE_TO_UPLOAD" && exit 1
 
 if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
   print_err "Bash 4.3 or newer is required"
@@ -372,6 +394,11 @@ fi
 
 if ! command -v jq >/dev/null 2>&1; then
   print_err "jq is required"
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  print_err "curl is required"
   exit 1
 fi
 
@@ -420,6 +447,9 @@ if [[ -n "$OWNER_ADDRESS" ]] && ! [[ "$OWNER_ADDRESS" =~ ^(0x)?([0-9a-fA-F]{40}|
   exit 1
 fi
 
+FILES_API_BASE="${FLOE_FILES_API_BASE:-${API_BASE%/v1/uploads}/v1/files}"
+FILES_API_BASE="${FILES_API_BASE%/}"
+
 append_auth_headers() {
   local token="${1:-}"
   if [[ -n "$API_KEY" ]]; then
@@ -440,6 +470,109 @@ append_auth_headers() {
 }
 
 append_auth_headers "$BEARER_TOKEN"
+
+curl_json() {
+  local method="$1"; shift
+  local url="$1"; shift
+  local data="${1:-}"
+
+  if [[ -n "$data" ]]; then
+    curl -sS --fail \
+      --connect-timeout "$CURL_CONNECT_TIMEOUT_S" \
+      --max-time "$CURL_MAX_TIME_S" \
+      --retry "$CURL_RETRY" \
+      --retry-delay "$CURL_RETRY_DELAY_S" \
+      --retry-all-errors \
+      -X "$method" "$url" \
+      "${CURL_AUTH_HEADERS[@]}" \
+      -H "Content-Type: application/json" \
+      -d "$data"
+  else
+    curl -sS --fail \
+      --connect-timeout "$CURL_CONNECT_TIMEOUT_S" \
+      --max-time "$CURL_MAX_TIME_S" \
+      --retry "$CURL_RETRY" \
+      --retry-delay "$CURL_RETRY_DELAY_S" \
+      --retry-all-errors \
+      -X "$method" "$url" \
+      "${CURL_AUTH_HEADERS[@]}"
+  fi
+}
+
+run_renew_request() {
+  local file_id="$1"
+  local epochs="$2"
+  local payload
+  local response
+  local response_file_id
+  local walrus_end_epoch
+  local metadata_url
+
+  payload=$(jq -cn \
+    --argjson epochs "$epochs" \
+    --arg blobObjectId "$RENEW_BLOB_OBJECT_ID" \
+    '{
+      epochs: $epochs
+    } + (if $blobObjectId == "" then {} else {blobObjectId: $blobObjectId} end)')
+
+  print_section "Renew"
+  print_info "Extending Walrus storage for an anchored file"
+  print_kv "File ID" "$file_id"
+  print_kv "Epochs" "$epochs"
+  if [[ -n "$RENEW_BLOB_OBJECT_ID" ]]; then
+    print_kv "Blob object" "$RENEW_BLOB_OBJECT_ID"
+  fi
+
+  response=$(curl_json POST "$FILES_API_BASE/$file_id/renew" "$payload" || true)
+  if [[ -z "$response" ]]; then
+    print_err "Renewal failed"
+    exit 1
+  fi
+
+  response_file_id=$(jq -r '.fileId // empty' <<<"$response" 2>/dev/null || true)
+  walrus_end_epoch=$(jq -r '.walrusEndEpoch // empty' <<<"$response" 2>/dev/null || true)
+  metadata_url="${FILES_API_BASE}/$file_id/metadata"
+
+  if [[ -z "$response_file_id" || "$response_file_id" == "null" ]]; then
+    print_err "Renewal failed"
+    echo "$response" >&2
+    exit 1
+  fi
+  if [[ -z "$walrus_end_epoch" || "$walrus_end_epoch" == "null" ]]; then
+    print_err "Renewal response missing walrusEndEpoch"
+    echo "$response" >&2
+    exit 1
+  fi
+
+  print_ok "File renewed"
+  print_kv "File ID" "$response_file_id"
+  print_kv "Walrus end epoch" "$walrus_end_epoch"
+  print_kv "Metadata" "$metadata_url"
+
+  if [[ "$JSON_OUTPUT" == "1" ]]; then
+    jq -n \
+      --arg fileId "$response_file_id" \
+      --arg metadataUrl "$metadata_url" \
+      --arg renewUrl "$FILES_API_BASE/$file_id/renew" \
+      --argjson epochs "$epochs" \
+      --argjson walrusEndEpoch "$walrus_end_epoch" \
+      '{
+        success: true,
+        fileId: $fileId,
+        epochs: $epochs,
+        walrusEndEpoch: $walrusEndEpoch,
+        metadataUrl: $metadataUrl,
+        renewUrl: $renewUrl
+      }'
+  else
+    ui_newline
+  fi
+}
+
+if [[ "$REQUEST_MODE" == "renew" ]]; then
+  run_renew_request "$RENEW_FILE_ID" "$EPOCHS"
+  exit 0
+fi
 
 TMP_DIR="$(mktemp -d -t floe-upload-XXXXXX)"
 
@@ -547,6 +680,11 @@ maybe_prepare_faststart_file() {
   esac
 }
 
+if [[ ! -f "$FILE_TO_UPLOAD" ]]; then
+  print_err "File not found: $FILE_TO_UPLOAD"
+  exit 1
+fi
+
 maybe_prepare_faststart_file "$FILE_TO_UPLOAD"
 
 FILE_SIZE=$(file_size_bytes "$FILE_TO_UPLOAD")
@@ -614,34 +752,6 @@ SOURCE_FILE_SHA256=$(sha256sum "$SOURCE_FILE_PATH" | awk '{print $1}')
 STATE_KEY="$(printf '%s' "${ABS_FILE_PATH}|${FILE_SIZE}|${CONTENT_TYPE}|${AUTO_FASTSTART}" | sha256sum | awk '{print $1}')"
 DEFAULT_STATE_FILE="${STATE_DIR%/}/$(basename "$SOURCE_FILE_PATH").${STATE_KEY}.floe-upload.json"
 STATE_FILE="${STATE_FILE_OVERRIDE:-$DEFAULT_STATE_FILE}"
-
-curl_json() {
-  local method="$1"; shift
-  local url="$1"; shift
-  local data="${1:-}"
-
-  if [[ -n "$data" ]]; then
-    curl -sS --fail \
-      --connect-timeout "$CURL_CONNECT_TIMEOUT_S" \
-      --max-time "$CURL_MAX_TIME_S" \
-      --retry "$CURL_RETRY" \
-      --retry-delay "$CURL_RETRY_DELAY_S" \
-      --retry-all-errors \
-      -X "$method" "$url" \
-      "${CURL_AUTH_HEADERS[@]}" \
-      -H "Content-Type: application/json" \
-      -d "$data"
-  else
-    curl -sS --fail \
-      --connect-timeout "$CURL_CONNECT_TIMEOUT_S" \
-      --max-time "$CURL_MAX_TIME_S" \
-      --retry "$CURL_RETRY" \
-      --retry-delay "$CURL_RETRY_DELAY_S" \
-      --retry-all-errors \
-      -X "$method" "$url" \
-      "${CURL_AUTH_HEADERS[@]}"
-  fi
-}
 
 print_api_error() {
   local resp_file="$1"

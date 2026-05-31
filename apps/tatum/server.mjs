@@ -1,6 +1,14 @@
 import http from "node:http";
 import { Readable } from "node:stream";
 
+import {
+  CHAIN_ALIASES,
+  CHAIN_LABELS,
+  chainLabel as sharedChainLabel,
+  explorerUrlFromRecord,
+  normalizeChain as sharedNormalizeChain,
+} from "../shared/chains.mjs";
+
 const port = Number(process.env.PORT ?? 3002);
 const coreApiBaseUrl = (process.env.FLOE_API_BASE_URL ?? "http://localhost:3001").replace(/\/+$/, "");
 const cookieName = "floe_wallet";
@@ -27,51 +35,6 @@ function formatBytes(bytes) {
 function formatDate(ms) {
   if (!Number.isFinite(Number(ms))) return "unknown";
   return new Date(Number(ms)).toLocaleString();
-}
-
-function normalizeChain(raw) {
-  return (raw ?? "sui").toString().trim().toLowerCase() || "sui";
-}
-
-function chainLabel(raw) {
-  const chain = normalizeChain(raw);
-  if (chain === "sui") return "Sui";
-  if (chain === "eth") return "Ethereum";
-  if (chain === "eth_base") return "Base";
-  if (chain === "eth_op") return "Optimism";
-  if (chain === "eth_arb") return "Arbitrum";
-  if (chain === "op") return "Optimism";
-  if (chain === "arb") return "Arbitrum";
-  if (chain === "eth_sepolia") return "Ethereum Sepolia";
-  if (chain === "matic") return "Polygon";
-  if (chain === "avax") return "Avalanche";
-  if (chain === "ftm") return "Fantom";
-  return chain.charAt(0).toUpperCase() + chain.slice(1);
-}
-
-function explorerTxUrl(chain, txId) {
-  if (!txId) return null;
-  const normalized = normalizeChain(chain);
-  const explorers = {
-    polygon: "https://polygonscan.com/tx/",
-    matic: "https://polygonscan.com/tx/",
-    base: "https://sepolia.basescan.org/tx/",
-    eth_base: "https://sepolia.basescan.org/tx/",
-    arbitrum: "https://sepolia.arbiscan.io/tx/",
-    eth_arb: "https://sepolia.arbiscan.io/tx/",
-    optimism: "https://testnet-explorer.optimism.io/tx/",
-    eth_op: "https://testnet-explorer.optimism.io/tx/",
-    op: "https://testnet-explorer.optimism.io/tx/",
-    eth_sepolia: "https://sepolia.etherscan.io/tx/",
-    celo: "https://celoscan.io/tx/",
-    avax: "https://c.testnet.snowtrace.io/tx/",
-    avalanche: "https://c.testnet.snowtrace.io/tx/",
-    bsc: "https://bscscan.com/tx/",
-    fantom: "https://testnet.ftmscan.com/tx/",
-    sui: "https://suivision.xyz/txblock/",
-  };
-  const base = explorers[normalized];
-  return base ? `${base}${encodeURIComponent(txId)}` : null;
 }
 
 function parseCookies(cookieHeader = "") {
@@ -198,8 +161,8 @@ function resolveUploadLimitForRequest(body, req) {
 }
 
 function renderCard(file) {
-  const chain = chainLabel(file.targetChain);
-  const txUrl = explorerTxUrl(file.targetChain, file.anchorTxId);
+  const chain = sharedChainLabel(file.targetChain);
+  const txUrl = explorerUrlFromRecord({ targetChain: file.targetChain, anchorTxId: file.anchorTxId });
   const metadataUrl = `/api/files/${encodeURIComponent(file.fileId)}/metadata.json`;
   const provenanceUrl = `/api/files/${encodeURIComponent(file.fileId)}/provenance`;
   const streamUrl = `${coreApiBaseUrl}/v1/files/${encodeURIComponent(file.fileId)}/stream`;
@@ -254,6 +217,7 @@ function renderPage({ owner, chain, result }) {
   const cards = result.data.map(renderCard).join("");
   const ownerValue = owner ?? "";
   const chainValue = chain ?? "";
+  const chainConfig = escapeJs({ aliases: CHAIN_ALIASES, labels: CHAIN_LABELS });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -332,7 +296,7 @@ function renderPage({ owner, chain, result }) {
           </div>
           <div class="rounded-3xl border border-white/10 bg-black/25 p-4">
             <p class="text-xs uppercase tracking-[0.18em] text-gray-500">Chains</p>
-            <p id="stat-chains" class="mt-2 text-3xl font-semibold">${new Set(result.data.map((item) => normalizeChain(item.targetChain))).size}</p>
+            <p id="stat-chains" class="mt-2 text-3xl font-semibold">${new Set(result.data.map((item) => sharedNormalizeChain(item.targetChain))).size}</p>
           </div>
           <div class="rounded-3xl border border-white/10 bg-black/25 p-4">
             <p class="text-xs uppercase tracking-[0.18em] text-gray-500">Latest</p>
@@ -477,9 +441,11 @@ function renderPage({ owner, chain, result }) {
     const uploadLimitPublic = Number(${publicUploadMaxBytes});
     const uploadLimitWallet = Number(${walletUploadMaxBytes});
     const initialData = ${JSON.stringify(result.data).replace(/</g, "\\u003c")};
+    const CHAIN_CONFIG = ${chainConfig};
 
     function normalizeChain(raw) {
-      return (raw || "sui").toString().trim().toLowerCase() || "sui";
+      const chain = (raw || "sui").toString().trim().toLowerCase().replace(/[-_\\s]/g, "");
+      return CHAIN_CONFIG.aliases[chain] || chain;
     }
 
     function formatBytes(bytes) {

@@ -1,5 +1,14 @@
 import http from "node:http";
 
+import {
+  CHAIN_ALIASES,
+  CHAIN_EXPLORERS,
+  CHAIN_LABELS,
+  chainLabel as sharedChainLabel,
+  explorerUrlFromRecord,
+  normalizeChain as sharedNormalizeChain,
+} from "../shared/chains.mjs";
+
 const port = Number(process.env.PORT ?? 3002);
 const apiBaseUrl = (process.env.FLOE_API_BASE_URL ?? "http://localhost:3001").replace(/\/+$/, "");
 
@@ -29,51 +38,6 @@ function formatDate(ms) {
   return new Date(Number(ms)).toLocaleString();
 }
 
-function normalizeChain(raw) {
-  return (raw ?? "sui").toString().trim().toLowerCase() || "sui";
-}
-
-function chainLabel(raw) {
-  const chain = normalizeChain(raw);
-  if (chain === "sui") return "Sui";
-  if (chain === "eth") return "Ethereum";
-  if (chain === "eth_base") return "Base";
-  if (chain === "eth_op") return "Optimism";
-  if (chain === "eth_arb") return "Arbitrum";
-  if (chain === "op") return "Optimism";
-  if (chain === "arb") return "Arbitrum";
-  if (chain === "eth_sepolia") return "Ethereum Sepolia";
-  if (chain === "matic") return "Polygon";
-  if (chain === "avax") return "Avalanche";
-  if (chain === "ftm") return "Fantom";
-  return chain.charAt(0).toUpperCase() + chain.slice(1);
-}
-
-function explorerTxUrl(chain, txId) {
-  if (!txId) return null;
-  const normalized = normalizeChain(chain);
-  const explorers = {
-    polygon: "https://polygonscan.com/tx/",
-    matic: "https://polygonscan.com/tx/",
-    base: "https://sepolia.basescan.org/tx/",
-    eth_base: "https://sepolia.basescan.org/tx/",
-    arbitrum: "https://sepolia.arbiscan.io/tx/",
-    eth_arb: "https://sepolia.arbiscan.io/tx/",
-    optimism: "https://testnet-explorer.optimism.io/tx/",
-    eth_op: "https://testnet-explorer.optimism.io/tx/",
-    op: "https://testnet-explorer.optimism.io/tx/",
-    eth_sepolia: "https://sepolia.etherscan.io/tx/",
-    celo: "https://celoscan.io/tx/",
-    avax: "https://c.testnet.snowtrace.io/tx/",
-    avalanche: "https://c.testnet.snowtrace.io/tx/",
-    bsc: "https://bscscan.com/tx/",
-    fantom: "https://testnet.ftmscan.com/tx/",
-    sui: "https://suivision.xyz/txblock/",
-  };
-  const base = explorers[normalized];
-  return base ? `${base}${encodeURIComponent(txId)}` : null;
-}
-
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -82,8 +46,8 @@ async function readJsonBody(req) {
 }
 
 function cardHtml(file) {
-  const chain = chainLabel(file.targetChain);
-  const txUrl = explorerTxUrl(file.targetChain, file.anchorTxId);
+  const chain = sharedChainLabel(file.targetChain);
+  const txUrl = explorerUrlFromRecord({ targetChain: file.targetChain, anchorTxId: file.anchorTxId });
   const metadataUrl = `${apiBaseUrl}/v1/files/${encodeURIComponent(file.fileId)}/metadata.json`;
   const streamUrl = `${apiBaseUrl}/v1/files/${encodeURIComponent(file.fileId)}/stream`;
   const fileUrl = `${apiBaseUrl}/files/${encodeURIComponent(file.fileId)}`;
@@ -134,6 +98,7 @@ function cardHtml(file) {
 
 function renderPage({ owner, chain, result }) {
   const initial = escapeJs({ owner, chain, data: result.data, nextCursor: result.nextCursor, hasNextPage: result.hasNextPage });
+  const chainConfig = escapeJs({ aliases: CHAIN_ALIASES, labels: CHAIN_LABELS, explorers: CHAIN_EXPLORERS });
   const cards = result.data.map(cardHtml).join("");
   const apiBase = apiBaseUrl;
   const ownerValue = owner ?? "";
@@ -216,7 +181,7 @@ function renderPage({ owner, chain, result }) {
           </div>
           <div class="rounded-3xl border border-white/10 bg-black/25 p-4">
             <p class="text-xs uppercase tracking-[0.18em] text-gray-500">Chains</p>
-            <p id="stat-chains" class="mt-2 text-3xl font-semibold">${new Set(result.data.map((item) => normalizeChain(item.targetChain))).size}</p>
+            <p id="stat-chains" class="mt-2 text-3xl font-semibold">${new Set(result.data.map((item) => sharedNormalizeChain(item.targetChain))).size}</p>
           </div>
           <div class="rounded-3xl border border-white/10 bg-black/25 p-4">
             <p class="text-xs uppercase tracking-[0.18em] text-gray-500">Latest</p>
@@ -255,6 +220,8 @@ function renderPage({ owner, chain, result }) {
     const statChains = document.getElementById("stat-chains");
     const statLatest = document.getElementById("stat-latest");
 
+    const CHAIN_CONFIG = ${chainConfig};
+
     function formatBytes(bytes) {
       if (!Number.isFinite(bytes)) return "unknown";
       if (bytes < 1024) return bytes + " B";
@@ -264,45 +231,19 @@ function renderPage({ owner, chain, result }) {
     }
 
     function normalizeChain(raw) {
-      return (raw || "sui").toString().trim().toLowerCase() || "sui";
+      const chain = (raw || "sui").toString().trim().toLowerCase().replace(/[-_\\s]/g, "");
+      return CHAIN_CONFIG.aliases[chain] || chain;
     }
 
     function chainLabel(raw) {
       const chain = normalizeChain(raw);
-      if (chain === "sui") return "Sui";
-      if (chain === "eth") return "Ethereum";
-      if (chain === "eth_base") return "Base";
-      if (chain === "eth_op") return "Optimism";
-      if (chain === "eth_arb") return "Arbitrum";
-      if (chain === "op") return "Optimism";
-      if (chain === "arb") return "Arbitrum";
-      if (chain === "matic") return "Polygon";
-      if (chain === "avax") return "Avalanche";
-      if (chain === "ftm") return "Fantom";
-      return chain.charAt(0).toUpperCase() + chain.slice(1);
+      return CHAIN_CONFIG.labels[chain] || chain.charAt(0).toUpperCase() + chain.slice(1);
     }
 
     function explorerTxUrl(chain, txId) {
       if (!txId) return null;
       const normalized = normalizeChain(chain);
-      const explorers = {
-        polygon: "https://polygonscan.com/tx/",
-        matic: "https://polygonscan.com/tx/",
-        base: "https://sepolia.basescan.org/tx/",
-        eth_base: "https://sepolia.basescan.org/tx/",
-        arbitrum: "https://sepolia.arbiscan.io/tx/",
-        eth_arb: "https://sepolia.arbiscan.io/tx/",
-        optimism: "https://testnet-explorer.optimism.io/tx/",
-        eth_op: "https://testnet-explorer.optimism.io/tx/",
-        op: "https://testnet-explorer.optimism.io/tx/",
-        celo: "https://celoscan.io/tx/",
-        avax: "https://c.testnet.snowtrace.io/tx/",
-        avalanche: "https://c.testnet.snowtrace.io/tx/",
-        bsc: "https://bscscan.com/tx/",
-        fantom: "https://testnet.ftmscan.com/tx/",
-        sui: "https://suivision.xyz/txblock/",
-      };
-      const base = explorers[normalized];
+      const base = CHAIN_CONFIG.explorers[normalized];
       return base ? base + encodeURIComponent(txId) : null;
     }
 

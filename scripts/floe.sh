@@ -476,13 +476,13 @@ mp4_faststart_state() {
   local path="$1"
   local first_atom
 
-  if ! command -v ffprobe >/dev/null 2>&1; then
+  if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "unknown"
     return
   fi
 
   first_atom=$(
-    ffprobe -v trace -i "$path" -f null - 2>&1 | \
+    ffmpeg -v trace -i "$path" -f null - 2>&1 | \
       awk '
         /type:\x27moov\x27/ { print "moov"; exit }
         /type:\x27mdat\x27/ { print "mdat"; exit }

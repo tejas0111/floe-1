@@ -474,6 +474,11 @@ test("chooseStreamReadPlan uses larger full reads and conservative ranged reads"
   assert.equal(ranged.initialSegmentBytes, 8 * 1024 * 1024);
 });
 
+test("chooseDirectColdStartSegmentBytes caps direct cold reads to 1MiB", () => {
+  assert.equal(filesRouteModule.chooseDirectColdStartSegmentBytes(8 * 1024 * 1024), 1 * 1024 * 1024);
+  assert.equal(filesRouteModule.chooseDirectColdStartSegmentBytes(512 * 1024), 512 * 1024);
+});
+
 test("shouldCacheFullObject caches only bounded small files", () => {
   assert.equal(streamCacheModule.shouldCacheFullObject(8 * 1024 * 1024), true);
   assert.equal(streamCacheModule.shouldCacheFullObject(64 * 1024 * 1024), false);

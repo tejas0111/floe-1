@@ -19,6 +19,10 @@ import { TopologyConfig } from "../config/topology.config.js";
 import { describeWalrusReaders } from "../config/walrus.config.js";
 import { describeWalrusWriters } from "../services/walrus/upload.js";
 import { buildVersionInfo } from "../version.js";
+import {
+  authzErrorCode,
+  authzStatusCode,
+} from "../services/http/route.helpers.js";
 
 function parseBoolEnv(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
@@ -73,15 +77,6 @@ function secureEqual(a: string, b: string): boolean {
   const bBuf = Buffer.from(b);
   if (aBuf.length !== bBuf.length) return false;
   return crypto.timingSafeEqual(aBuf, bBuf);
-}
-
-function authzStatusCode(code?: string): 401 | 403 {
-  return code === "AUTH_REQUIRED" ? 401 : 403;
-}
-
-function authzErrorCode(code?: string): "AUTH_REQUIRED" | "INSUFFICIENT_SCOPE" {
-  if (code === "AUTH_REQUIRED") return "AUTH_REQUIRED";
-  return "INSUFFICIENT_SCOPE";
 }
 
 function requireMetricsToken(req: any, reply: any): boolean {

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
 
 import { UploadConfig } from "../../config/uploads.config.js";
 import { fetchWalrusBlob } from "../walrus/read.js";
@@ -17,6 +16,7 @@ import {
   recordStreamCacheEviction,
   setStreamCacheMetrics,
 } from "../metrics/runtime.metrics.js";
+import { writeWebBodyToFile } from "./stream.cache.io.js";
 
 export const shouldCacheFullObject = shouldCacheFullObjectPolicy;
 
@@ -36,6 +36,10 @@ function sanitizeBlobId(blobId: string): string {
 
 function streamCachePath(blobId: string): string {
   return path.join(STREAM_CACHE_FULL_DIR, `${sanitizeBlobId(blobId)}.blob`);
+}
+
+export function getStreamCachePath(blobId: string): string {
+  return streamCachePath(blobId);
 }
 
 function streamRangeCacheKey(params: { blobId: string; start: number; end: number }): string {
@@ -207,28 +211,12 @@ export async function ensureCachedStreamBlob(params: {
       const body = res.body;
       if (!body) throw new Error("WALRUS_CACHE_FILL_MISSING_BODY");
 
-      let bytesWritten = 0;
-      await new Promise<void>((resolve, reject) => {
-        const ws = fs.createWriteStream(tempPath, { flags: "wx" });
-        const rs = Readable.fromWeb(body as any);
-        rs.on("data", (chunk: Uint8Array) => {
-          bytesWritten += chunk.byteLength;
-        });
-        rs.once("error", reject);
-        ws.once("error", reject);
-        ws.once("finish", resolve);
-        rs.pipe(ws);
-      }).catch(async (err) => {
-        await fsp.rm(tempPath, { force: true }).catch(() => {});
-        throw err;
+      await writeWebBodyToFile({
+        body,
+        tempPath,
+        expectedBytes: params.sizeBytes,
+        truncationErrorPrefix: "STREAM_CACHE_FULL_TRUNCATED",
       });
-
-      if (bytesWritten !== params.sizeBytes) {
-        await fsp.rm(tempPath, { force: true }).catch(() => {});
-        throw new Error(
-          `STREAM_CACHE_FULL_TRUNCATED expected=${params.sizeBytes} read=${bytesWritten}`
-        );
-      }
 
       await fsp.rename(tempPath, filePath).catch(async (err) => {
         await fsp.rm(tempPath, { force: true }).catch(() => {});
@@ -296,26 +284,12 @@ export async function ensureCachedStreamRange(params: {
       const body = res.body;
       if (!body) throw new Error("WALRUS_CACHE_FILL_MISSING_BODY");
 
-      let bytesWritten = 0;
-      await new Promise<void>((resolve, reject) => {
-        const ws = fs.createWriteStream(tempPath, { flags: "wx" });
-        const rs = Readable.fromWeb(body as any);
-        rs.on("data", (chunk: Uint8Array) => {
-          bytesWritten += chunk.byteLength;
-        });
-        rs.once("error", reject);
-        ws.once("error", reject);
-        ws.once("finish", resolve);
-        rs.pipe(ws);
-      }).catch(async (err) => {
-        await fsp.rm(tempPath, { force: true }).catch(() => {});
-        throw err;
+      await writeWebBodyToFile({
+        body,
+        tempPath,
+        expectedBytes: expectedSize,
+        truncationErrorPrefix: "STREAM_CACHE_RANGE_TRUNCATED",
       });
-
-      if (bytesWritten !== expectedSize) {
-        await fsp.rm(tempPath, { force: true }).catch(() => {});
-        throw new Error(`STREAM_CACHE_RANGE_TRUNCATED expected=${expectedSize} read=${bytesWritten}`);
-      }
 
       await fsp.rename(tempPath, cachePath).catch(async (err) => {
         await fsp.rm(tempPath, { force: true }).catch(() => {});

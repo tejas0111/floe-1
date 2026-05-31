@@ -10,13 +10,17 @@ import {
   listDiscoveryFiles,
   upsertIndexedFile,
 } from "../db/files.repository.js";
-import { fetchWalrusBlob } from "../services/walrus/read.js";
 import { renewWalrusBlob } from "../services/walrus/renew.js";
 import { getCurrentWalrusEpoch } from "../services/walrus/epoch.js";
 import { renewFileMetadata } from "../sui/file.metadata.js";
 import { WalrusReadLimits } from "../config/walrus.config.js";
 import { sendApiError } from "../utils/apiError.js";
 import { applyRateLimitHeaders } from "../services/auth/auth.headers.js";
+import {
+  authzErrorCode,
+  authzStatusCode,
+  shouldExposeBlobId,
+} from "../services/http/route.helpers.js";
 import {
   applyFileLookupHeaders,
   applyFileReadCacheHeaders,
@@ -41,10 +45,15 @@ import {
 } from "../services/events/infrastructure.events.js";
 import {
   createCachedReadStream,
-  ensureCachedStreamBlob,
-  ensureCachedStreamRange,
   getCachedStreamPath,
+  getStreamCachePath,
+  shouldCacheFullObject,
 } from "../services/stream/stream.cache.js";
+import {
+  readCachedSegmentByteStream,
+  readWalrusByteStream,
+  readWalrusByteStreamAndCache,
+} from "../services/stream/stream.reader.js";
 
 function inferContainerFromMime(mimeType: string): string | null {
   const m = (mimeType ?? "").toLowerCase();
@@ -66,24 +75,6 @@ function classifyStreamErrorReason(message: string): string {
   if (msg.includes("STREAM_TRUNCATED")) return "stream_truncated";
   if (msg.includes("ABORT")) return "aborted";
   return "other";
-}
-
-function shouldExposeBlobId(req: any): boolean {
-  // Default: never expose blobId unless explicitly requested.
-  if (process.env.FLOE_EXPOSE_BLOB_ID === "1") return true;
-  const q = req?.query ?? {};
-  const raw = q.includeBlobId ?? q.include_blob_id ?? q.includeStorage;
-  return raw === "1" || raw === "true" || raw === true;
-}
-
-function authzStatusCode(code?: string): 401 | 403 {
-  return code === "AUTH_REQUIRED" ? 401 : 403;
-}
-
-function authzErrorCode(code?: string): "AUTH_REQUIRED" | "OWNER_MISMATCH" | "INSUFFICIENT_SCOPE" {
-  if (code === "AUTH_REQUIRED") return "AUTH_REQUIRED";
-  if (code === "INSUFFICIENT_SCOPE") return "INSUFFICIENT_SCOPE";
-  return "OWNER_MISMATCH";
 }
 
 function sendFileAccessDenied(reply: any, authz: { code?: string; message?: string }) {
@@ -125,15 +116,14 @@ export type StreamReadPlan = {
   segmentBytes: number;
 };
 
-type ParsedRange = {
-  start: number;
-  end: number;
-};
+export function chooseDirectColdStartSegmentBytes(segmentBytes: number): number {
+  return Math.min(segmentBytes, 1 * 1024 * 1024);
+}
 
 function parseSingleRangeHeader(params: {
   rangeHeader: string;
   sizeBytes: number;
-}): { range: ParsedRange; kind: "bounded" | "open" | "suffix" } | { error: "INVALID_RANGE" } {
+}): { range: { start: number; end: number }; kind: "bounded" | "open" | "suffix" } | { error: "INVALID_RANGE" } {
   const { rangeHeader, sizeBytes } = params;
 
   const m = rangeHeader.trim().match(/^bytes=(\d*)-(\d*)$/i);
@@ -166,196 +156,6 @@ function parseSingleRangeHeader(params: {
 
   const end = Math.min(endRaw, sizeBytes - 1);
   return { range: { start, end }, kind: "bounded" };
-}
-
-async function* walrusByteStream(params: {
-  blobId: string;
-  start: number;
-  end: number;
-  maxSegmentBytes: number;
-  initialSegmentBytes?: number;
-  signal: AbortSignal;
-}): AsyncGenerator<Uint8Array> {
-  const safeUpstreamSnippet = (body: string): string => {
-    const trimmed = (body ?? "").trim();
-    if (!trimmed) return "";
-    const snippet = trimmed.slice(0, 160);
-    const ascii = snippet.replace(/[^\x20-\x7E]/g, "");
-    return ascii;
-  };
-
-  const makeWalrusReadError = (upstreamStatus: number, upstreamBody: string) => {
-    const snippet = safeUpstreamSnippet(upstreamBody);
-    const err = new Error(
-      `WALRUS_RANGE_FAILED status=${upstreamStatus}${snippet ? ` body=${snippet}` : ""}`.trim()
-    ) as Error & { statusCode?: number };
-
-    if (upstreamStatus === 404) {
-      err.statusCode = 404;
-      err.message = "FILE_BLOB_UNAVAILABLE";
-      return err;
-    }
-
-    err.statusCode = upstreamStatus >= 500 ? 503 : 502;
-    return err;
-  };
-
-  const maxSegmentBytes =
-    Number.isFinite(params.maxSegmentBytes) && params.maxSegmentBytes > 0
-      ? params.maxSegmentBytes
-      : 16 * 1024 * 1024;
-
-  const minSegmentBytes = 256 * 1024; // 256KiB
-
-  let offset = params.start;
-
-  while (offset <= params.end) {
-    if (params.signal.aborted) return;
-
-    const preferredSegmentBytes =
-      offset === params.start && params.initialSegmentBytes
-        ? Math.max(maxSegmentBytes, params.initialSegmentBytes)
-        : maxSegmentBytes;
-    let segSize = Math.min(preferredSegmentBytes, params.end - offset + 1);
-
-    while (true) {
-      const segEnd = Math.min(params.end, offset + segSize - 1);
-
-      let upstream: Response;
-      try {
-        ({ res: upstream } = await fetchWalrusBlob({
-          blobId: params.blobId,
-          rangeHeader: `bytes=${offset}-${segEnd}`,
-          signal: params.signal,
-        }));
-      } catch (err) {
-        if (params.signal.aborted || (err as any)?.name === "AbortError") {
-          return;
-        }
-
-        if (segSize > minSegmentBytes) {
-          segSize = Math.max(minSegmentBytes, Math.floor(segSize / 2));
-          continue;
-        }
-
-        throw err;
-      }
-
-      if (upstream.status === 416 && segSize > minSegmentBytes) {
-        segSize = Math.max(minSegmentBytes, Math.floor(segSize / 2));
-        continue;
-      }
-
-      const isFullObjectAttempt =
-        params.start === 0 && offset === 0 && segEnd === params.end;
-
-      if (upstream.status === 200 && isFullObjectAttempt) {
-      } else if (upstream.status !== 206) {
-        const text = await upstream.text().catch(() => "");
-        throw makeWalrusReadError(upstream.status, text);
-      }
-
-      const body = upstream.body;
-      if (!body) {
-        throw new Error(`WALRUS_MISSING_BODY status=${upstream.status} offset=${offset} end=${segEnd}`);
-      }
-
-      const rs = Readable.fromWeb(body as any);
-      const expected = segEnd - offset + 1;
-      let read = 0;
-
-      for await (const chunk of rs) {
-        if (params.signal.aborted) return;
-        const buf = chunk as Uint8Array;
-        read += buf.byteLength;
-        yield buf;
-      }
-
-      if (read < expected) {
-        if (read === 0) {
-          throw new Error(
-            `WALRUS_EMPTY_SEGMENT offset=${offset} end=${segEnd}`
-          );
-        }
-
-        offset += read;
-        segSize = Math.max(minSegmentBytes, Math.floor(segSize / 2));
-        continue;
-      }
-
-      if (read > expected) {
-        throw new Error(
-          `WALRUS_SEGMENT_OVERRUN expected=${expected} read=${read}`
-        );
-      }
-
-      offset = segEnd + 1;
-      break;
-    }
-  }
-}
-
-async function* cachedSegmentByteStream(params: {
-  blobId: string;
-  start: number;
-  end: number;
-  initialSegmentBytes: number;
-  segmentBytes: number;
-  signal: AbortSignal;
-}): AsyncGenerator<Uint8Array> {
-  let offset = params.start;
-
-  while (offset <= params.end) {
-    if (params.signal.aborted) return;
-
-    const preferredSegmentBytes =
-      offset === params.start ? params.initialSegmentBytes : params.segmentBytes;
-    const segmentEnd = Math.min(params.end, offset + preferredSegmentBytes - 1);
-    const expected = segmentEnd - offset + 1;
-    try {
-      const cachePath = await ensureCachedStreamRange({
-        blobId: params.blobId,
-        start: offset,
-        end: segmentEnd,
-        signal: params.signal,
-      });
-
-      const rs = createCachedReadStream({
-        filePath: cachePath,
-        start: 0,
-        end: segmentEnd - offset,
-      });
-
-      let read = 0;
-      for await (const chunk of rs) {
-        if (params.signal.aborted) return;
-        const buf = chunk as Uint8Array;
-        read += buf.byteLength;
-        yield buf;
-      }
-
-      if (read !== expected) {
-        throw new Error(`STREAM_CACHE_RANGE_TRUNCATED expected=${expected} read=${read}`);
-      }
-    } catch (err) {
-      if ((err as Error)?.message !== "STREAM_CACHE_CAPACITY_EXCEEDED") {
-        throw err;
-      }
-
-      for await (const chunk of walrusByteStream({
-        blobId: params.blobId,
-        start: offset,
-        end: segmentEnd,
-        maxSegmentBytes: params.segmentBytes,
-        initialSegmentBytes: expected,
-        signal: params.signal,
-      })) {
-        yield chunk;
-      }
-    }
-
-    offset = segmentEnd + 1;
-  }
 }
 
 export function chooseStreamReadPlan(params: {
@@ -1023,14 +823,7 @@ export async function filesRoutes(app: FastifyInstance) {
         return reply.status(status).send();
       }
 
-      const cachedPath =
-        (await getCachedStreamPath(blobId, sizeBytes)) ??
-        (status === 200
-          ? await ensureCachedStreamBlob({
-              blobId,
-              sizeBytes,
-            }).catch(() => null)
-          : null);
+      const cachedPath = await getCachedStreamPath(blobId, sizeBytes);
 
       if (cachedPath) {
         const stat = await fs.stat(cachedPath).catch(() => null);
@@ -1100,6 +893,10 @@ export async function filesRoutes(app: FastifyInstance) {
       const streamStartMs = Date.now();
       let firstByteObserved = false;
       let totalStreamedBytes = 0;
+      const useDirectWalrusStream = !cachedPath && status === 200;
+      const shouldFillColdStreamCache = useDirectWalrusStream && shouldCacheFullObject(sizeBytes);
+      const directColdStartSegmentBytes = chooseDirectColdStartSegmentBytes(readPlan.segmentBytes);
+
       emitInfrastructureEvent(req.log, {
         event: "stream_started",
         requestId: eventContext.requestId,
@@ -1119,14 +916,35 @@ export async function filesRoutes(app: FastifyInstance) {
       });
       const stream = Readable.from(
         (async function* () {
-          for await (const chunk of cachedSegmentByteStream({
-            blobId,
-            start,
-            end,
-            initialSegmentBytes: readPlan.initialSegmentBytes,
-            segmentBytes: readPlan.segmentBytes,
-            signal: abortController.signal,
-          })) {
+          const source = shouldFillColdStreamCache
+              ? readWalrusByteStreamAndCache({
+                blobId,
+                start,
+                end,
+                maxSegmentBytes: readPlan.segmentBytes,
+                initialSegmentBytes: directColdStartSegmentBytes,
+                signal: abortController.signal,
+                cachePath: getStreamCachePath(blobId),
+              })
+              : useDirectWalrusStream
+              ? readWalrusByteStream({
+                blobId,
+                start,
+                end,
+                maxSegmentBytes: readPlan.segmentBytes,
+                initialSegmentBytes: directColdStartSegmentBytes,
+                signal: abortController.signal,
+              })
+            : readCachedSegmentByteStream({
+                blobId,
+                start,
+                end,
+                initialSegmentBytes: readPlan.initialSegmentBytes,
+                segmentBytes: readPlan.segmentBytes,
+                signal: abortController.signal,
+              });
+
+          for await (const chunk of source) {
             if (!firstByteObserved && chunk.byteLength > 0) {
               firstByteObserved = true;
               observeStreamTtfb({

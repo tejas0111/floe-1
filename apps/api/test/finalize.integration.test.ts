@@ -1,18 +1,14 @@
 import test, { after, afterEach, before } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-const redisPort = 16380 + Math.floor(Math.random() * 1000);
-const redisUrl = `redis://127.0.0.1:${redisPort}`;
+import { createInMemoryRedisClient } from "./helpers/in-memory-redis.ts";
+
 const uploadTmpDir = path.join(os.tmpdir(), `floe-finalize-integration-${process.pid}`);
 
-process.env.FLOE_REDIS_PROVIDER = "native";
-process.env.REDIS_URL = redisUrl;
 process.env.FLOE_CHUNK_STORE_MODE = "disk";
 process.env.UPLOAD_TMP_DIR = uploadTmpDir;
 process.env.FLOE_FINALIZE_RETRY_MS = "200";
@@ -39,7 +35,6 @@ type KeysModule = typeof import("../src/state/keys.ts");
 type UploadRoutesModule = typeof import("../src/routes/uploads.ts");
 type HealthRouteModule = typeof import("../src/routes/health.ts");
 
-let redisProcess: ChildProcess | null = null;
 let redisModule: RedisModule;
 let postgresModule: PostgresModule;
 let sessionModule: SessionModule;
@@ -77,25 +72,6 @@ function makeRedisMethodFailureStub(originalRedis: any, methods: string[]) {
       return typeof value === "function" ? value.bind(target) : value;
     },
   }) as any;
-}
-
-async function waitForRedis(port: number) {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const socket = net.createConnection({ host: "127.0.0.1", port });
-      socket.once("connect", () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.once("error", () => {
-        socket.destroy();
-        resolve(false);
-      });
-    });
-    if (ok) return;
-    await sleep(50);
-  }
-  throw new Error(`redis-server did not start on port ${port}`);
 }
 
 async function createRouteApp(customAuthProvider?: any) {
@@ -262,13 +238,6 @@ async function markUploadReadyForFinalize(uploadId: string, totalChunks = 2) {
 
 before(async () => {
   await fs.mkdir(uploadTmpDir, { recursive: true });
-  redisProcess = spawn(
-    "redis-server",
-    ["--port", String(redisPort), "--save", "", "--appendonly", "no"],
-    { stdio: "ignore" }
-  );
-  await waitForRedis(redisPort);
-
   redisModule = await import("../src/state/redis.ts");
   postgresModule = await import("../src/state/postgres.ts");
   sessionModule = await import("../src/services/uploads/session.ts");
@@ -277,7 +246,7 @@ before(async () => {
   uploadRoutesModule = await import("../src/routes/uploads.ts");
   healthRouteModule = await import("../src/routes/health.ts");
 
-  await redisModule.initRedis();
+  redisModule.setRedisForTests(createInMemoryRedisClient());
 });
 
 afterEach(async () => {
@@ -294,9 +263,6 @@ after(async () => {
   if (redisModule) {
     await cleanupQueueState().catch(() => {});
     await redisModule.closeRedis().catch(() => {});
-  }
-  if (redisProcess && !redisProcess.killed) {
-    redisProcess.kill("SIGTERM");
   }
   await fs.rm(uploadTmpDir, { recursive: true, force: true }).catch(() => {});
 });
@@ -578,12 +544,11 @@ test("stopUploadFinalizeWorker clears scheduled retry timers", async () => {
   const uploadId = await seedUpload();
   try {
     await markUploadReadyForFinalize(uploadId);
-    await queueModule.startUploadFinalizeWorker(log);
-    await queueModule.finalizeQueueTestHooks.forceEnqueue(uploadId);
-
     queueModule.finalizeQueueTestHooks.setProcessFinalize(async () => {
       throw new Error("WALRUS temporary outage");
     });
+    await queueModule.startUploadFinalizeWorker(log);
+    await queueModule.finalizeQueueTestHooks.forceEnqueue(uploadId);
 
     await queueModule.finalizeQueueTestHooks.runNextQueuedJob(log);
     assert.equal(queueModule.finalizeQueueTestHooks.getRetryTimerCount() > 0, true);

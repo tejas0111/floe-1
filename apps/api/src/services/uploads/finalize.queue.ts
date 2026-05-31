@@ -112,11 +112,6 @@ const FINALIZE_RETRYABLE_FAILURE_MAX_ATTEMPTS = parsePositiveIntEnv(
   "FLOE_FINALIZE_RETRYABLE_FAILURE_MAX_ATTEMPTS",
   4
 );
-const FINALIZE_DRAIN_INTERVAL_MS = parsePositiveIntEnv(
-  "FLOE_FINALIZE_DRAIN_INTERVAL_MS",
-  500,
-  100
-);
 let finalizeQueueMaxDepth = parsePositiveIntEnv(
   "FLOE_FINALIZE_QUEUE_MAX_DEPTH",
   5000
@@ -126,14 +121,18 @@ const finalizeWorkers = new LocalAsyncQueue({
   concurrency: FINALIZE_CONCURRENCY,
 });
 
-let drainTimer: NodeJS.Timeout | null = null;
 const retryTimers = new Set<NodeJS.Timeout>();
 const activeLocal = new Set<string>();
 let processFinalizeImpl: typeof processFinalize = processFinalize;
 let scheduleRetryImpl: typeof scheduleRetry = scheduleRetry;
 let finalizeWorkerRunning = false;
 let autoDrainEnabled = true;
+// Coalesce drain triggers and stop re-polling once the queue has been observed empty.
+let drainLoopRunning = false;
+let drainRequested = false;
+let queueMayHaveMore = false;
 const activeFinalizeProcesses = new Set<Promise<unknown>>();
+const activeDrainProcesses = new Set<Promise<void>>();
 
 function queueKey() {
   return uploadKeys.finalizeQueue();
@@ -193,6 +192,9 @@ async function enqueueUploadId(uploadId: string): Promise<boolean> {
     [pendingKey(), queueKey(), uploadKeys.finalizePendingSince()],
     [uploadId, String(queuedAt)]
   );
+  if (Number(added) === 1) {
+    queueMayHaveMore = true;
+  }
   return Number(added) === 1;
 }
 
@@ -255,6 +257,7 @@ async function enqueueUploadIdForce(uploadId: string): Promise<void> {
     [pendingKey(), queueKey(), uploadKeys.finalizePendingSince()],
     [uploadId, String(queuedAt)]
   );
+  queueMayHaveMore = true;
 }
 
 async function dequeueUploadId(): Promise<string | null> {
@@ -262,6 +265,36 @@ async function dequeueUploadId(): Promise<string | null> {
   const uploadId = await redis.rpop<string>(queueKey());
   if (!uploadId || typeof uploadId !== "string") return null;
   return uploadId;
+}
+
+function requestDrain(log: FastifyBaseLogger) {
+  if (!finalizeWorkerRunning || !autoDrainEnabled) return;
+  drainRequested = true;
+  if (drainLoopRunning) return;
+  drainLoopRunning = true;
+
+  const drainPromise = (async () => {
+    try {
+      while (finalizeWorkerRunning && autoDrainEnabled && drainRequested) {
+        drainRequested = false;
+        await drainOnce(log);
+        if (!queueMayHaveMore) {
+          break;
+        }
+      }
+    } finally {
+      drainLoopRunning = false;
+      if (drainRequested && finalizeWorkerRunning && autoDrainEnabled && queueMayHaveMore) {
+        requestDrain(log);
+      }
+    }
+  })();
+  activeDrainProcesses.add(drainPromise);
+  void drainPromise
+    .catch((err) => log.error({ err }, "Finalize queue drain failed"))
+    .finally(() => {
+      activeDrainProcesses.delete(drainPromise);
+    });
 }
 
 async function clearPending(uploadId: string): Promise<void> {
@@ -323,7 +356,7 @@ async function scheduleRetry(uploadId: string, log: FastifyBaseLogger, delayMs: 
           return;
         }
         await enqueueUploadIdForce(uploadId);
-        await drainOnce(log);
+        requestDrain(log);
       } catch (err: any) {
         await markUploadFailed({
           uploadId,
@@ -507,7 +540,10 @@ async function runFinalizeJob(uploadId: string, log: FastifyBaseLogger) {
 async function drainOnce(log: FastifyBaseLogger) {
   while (finalizeWorkers.size + finalizeWorkers.pending < FINALIZE_CONCURRENCY) {
     const uploadId = await dequeueUploadId();
-    if (!uploadId) return;
+    if (!uploadId) {
+      queueMayHaveMore = false;
+      return;
+    }
     const reservation = reserveFinalizeActiveLocal({
       activeLocalIds: [...activeLocal],
       uploadId,
@@ -516,9 +552,16 @@ async function drainOnce(log: FastifyBaseLogger) {
 
     activeLocal.add(uploadId);
     void finalizeWorkers.add(async () => {
-      await runFinalizeJob(uploadId, log);
+      try {
+        await runFinalizeJob(uploadId, log);
+      } finally {
+        if (finalizeWorkerRunning && autoDrainEnabled && queueMayHaveMore) {
+          requestDrain(log);
+        }
+      }
     });
   }
+  queueMayHaveMore = true;
 }
 
 async function recoverFinalizingUploads(log: FastifyBaseLogger): Promise<{
@@ -591,8 +634,12 @@ export const finalizeQueueTestHooks = {
   reset() {
     activeLocal.clear();
     activeFinalizeProcesses.clear();
+    activeDrainProcesses.clear();
     finalizeWorkerRunning = false;
     autoDrainEnabled = true;
+    drainLoopRunning = false;
+    drainRequested = false;
+    queueMayHaveMore = false;
     finalizeQueueMaxDepth = parsePositiveIntEnv("FLOE_FINALIZE_QUEUE_MAX_DEPTH", 5000);
     for (const timer of retryTimers) {
       clearTimeout(timer);
@@ -628,23 +675,15 @@ export async function startUploadFinalizeWorker(log: FastifyBaseLogger): Promise
   cleaned: number;
 }> {
   finalizeWorkerRunning = true;
+  drainRequested = false;
   const recovery = await recoverFinalizingUploads(log);
   await drainOnce(log);
-
-  if (drainTimer) clearInterval(drainTimer);
-  drainTimer = setInterval(() => {
-    void drainOnce(log).catch((err) => log.error({ err }, "Finalize queue drain failed"));
-  }, FINALIZE_DRAIN_INTERVAL_MS);
-  drainTimer.unref?.();
   return recovery;
 }
 
 export async function stopUploadFinalizeWorker(): Promise<void> {
   finalizeWorkerRunning = false;
-  if (drainTimer) {
-    clearInterval(drainTimer);
-    drainTimer = null;
-  }
+  drainRequested = false;
   for (const timer of retryTimers) {
     clearTimeout(timer);
   }
@@ -653,6 +692,10 @@ export async function stopUploadFinalizeWorker(): Promise<void> {
   while (activeFinalizeProcesses.size > 0) {
     await Promise.allSettled([...activeFinalizeProcesses]);
   }
+  while (activeDrainProcesses.size > 0) {
+    await Promise.allSettled([...activeDrainProcesses]);
+  }
+  queueMayHaveMore = false;
 }
 
 export async function enqueueUploadFinalize(params: {
@@ -668,7 +711,7 @@ export async function enqueueUploadFinalize(params: {
   const enqueued = admission === "enqueued";
   recordFinalizeEnqueue({ result: enqueued ? "enqueued" : "duplicate" });
   if (autoDrainEnabled) {
-    await drainOnce(params.log);
+    requestDrain(params.log);
   }
   return { enqueued, rejectedByBackpressure: false };
 }

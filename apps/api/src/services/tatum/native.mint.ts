@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
-
-type NativeMintChain = "base" | "optimism" | "arbitrum" | "avalanche" | "fantom" | "ethsepolia";
+import { resolveNativeMintRpcUrl as resolveNativeMintRpcUrlShared } from "../chains.js";
 
 export type NativeMintResult = {
   txId: string;
@@ -25,38 +24,8 @@ export type NativeMintDependencies = {
   resolveRpcUrl?: (chain: string) => string;
 };
 
-const CHAIN_RPC_URL: Record<NativeMintChain, string> = {
-  base: "https://sepolia.base.org",
-  optimism: "https://sepolia.optimism.io",
-  arbitrum: "https://sepolia-rollup.arbitrum.io/rpc",
-  avalanche: "https://api.avax-test.network/ext/bc/C/rpc",
-  fantom: "https://rpc.testnet.fantom.network",
-  ethsepolia: "https://ethereum-sepolia.publicnode.com",
-};
-
-function normalizeChain(rawChain?: string | null): NativeMintChain | null {
-  const raw = rawChain?.trim().toLowerCase();
-  const chain = raw ? raw.replace(/[-_\s]/g, "") : "";
-  const normalized = chain === "op" ? "optimism" : chain === "arb" ? "arbitrum" : chain === "avax" ? "avalanche" : chain === "ftm" ? "fantom" : chain;
-  if (
-    normalized === "base" ||
-    normalized === "optimism" ||
-    normalized === "arbitrum" ||
-    normalized === "avalanche" ||
-    normalized === "fantom" ||
-    normalized === "ethsepolia"
-  ) {
-    return normalized;
-  }
-  return null;
-}
-
 export function resolveNativeMintRpcUrl(rawChain?: string | null): string {
-  const chain = normalizeChain(rawChain);
-  if (!chain) {
-    return CHAIN_RPC_URL.base;
-  }
-  return CHAIN_RPC_URL[chain];
+  return resolveNativeMintRpcUrlShared(rawChain);
 }
 
 export function deriveNativeTokenId(params: { chain: string; blobId: string }): string {

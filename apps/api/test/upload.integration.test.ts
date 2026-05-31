@@ -344,6 +344,31 @@ test("create rejects reusing an idempotency key with a different checksum", asyn
   assert.equal(secondBody.error.code, "IDEMPOTENCY_KEY_REUSED");
 });
 
+test("create persists the x-owner-address header into the upload session", async () => {
+  const app = await createRouteApp();
+  const owner = "0xE3C6814f60429EaED1b64Bd059aeaca9bEB89aC5";
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "x-owner-address": owner },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+      chunkSize: 4,
+      epochs: 1,
+    },
+  });
+
+  const body = res.json();
+  const session = await sessionModule.getSession(body.uploadId);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(session?.owner, owner);
+});
+
 afterEach(async () => {
   const redis = redisModule.getRedis();
   const { uploadKeys } = keysModule;

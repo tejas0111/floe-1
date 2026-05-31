@@ -40,6 +40,9 @@ function chainLabel(raw) {
   if (chain === "eth_base") return "Base";
   if (chain === "eth_op") return "Optimism";
   if (chain === "eth_arb") return "Arbitrum";
+  if (chain === "op") return "Optimism";
+  if (chain === "arb") return "Arbitrum";
+  if (chain === "eth_sepolia") return "Ethereum Sepolia";
   if (chain === "matic") return "Polygon";
   if (chain === "avax") return "Avalanche";
   if (chain === "ftm") return "Fantom";
@@ -52,16 +55,19 @@ function explorerTxUrl(chain, txId) {
   const explorers = {
     polygon: "https://polygonscan.com/tx/",
     matic: "https://polygonscan.com/tx/",
-    base: "https://basescan.org/tx/",
-    eth_base: "https://basescan.org/tx/",
-    arbitrum: "https://arbiscan.io/tx/",
-    eth_arb: "https://arbiscan.io/tx/",
-    optimism: "https://optimistic.etherscan.io/tx/",
-    eth_op: "https://optimistic.etherscan.io/tx/",
+    base: "https://sepolia.basescan.org/tx/",
+    eth_base: "https://sepolia.basescan.org/tx/",
+    arbitrum: "https://sepolia.arbiscan.io/tx/",
+    eth_arb: "https://sepolia.arbiscan.io/tx/",
+    optimism: "https://testnet-explorer.optimism.io/tx/",
+    eth_op: "https://testnet-explorer.optimism.io/tx/",
+    op: "https://testnet-explorer.optimism.io/tx/",
+    eth_sepolia: "https://sepolia.etherscan.io/tx/",
     celo: "https://celoscan.io/tx/",
-    avax: "https://snowtrace.io/tx/",
+    avax: "https://c.testnet.snowtrace.io/tx/",
+    avalanche: "https://c.testnet.snowtrace.io/tx/",
     bsc: "https://bscscan.com/tx/",
-    fantom: "https://ftmscan.com/tx/",
+    fantom: "https://testnet.ftmscan.com/tx/",
     sui: "https://suivision.xyz/txblock/",
   };
   const base = explorers[normalized];
@@ -304,6 +310,7 @@ function renderPage({ owner, chain, result }) {
                 <option value="base" ${chainValue === "base" ? "selected" : ""}>Base</option>
                 <option value="arbitrum" ${chainValue === "arbitrum" ? "selected" : ""}>Arbitrum</option>
                 <option value="optimism" ${chainValue === "optimism" ? "selected" : ""}>Optimism</option>
+                <option value="eth_sepolia" ${chainValue === "eth_sepolia" ? "selected" : ""}>Ethereum Sepolia</option>
                 <option value="celo" ${chainValue === "celo" ? "selected" : ""}>Celo</option>
                 <option value="avax" ${chainValue === "avax" ? "selected" : ""}>Avalanche</option>
                 <option value="bsc" ${chainValue === "bsc" ? "selected" : ""}>BSC</option>
@@ -366,6 +373,7 @@ function renderPage({ owner, chain, result }) {
                 <option value="base">Base</option>
                 <option value="arbitrum">Arbitrum</option>
                 <option value="optimism">Optimism</option>
+                <option value="eth_sepolia">Ethereum Sepolia</option>
                 <option value="celo">Celo</option>
                 <option value="avax">Avalanche</option>
                 <option value="bsc">BSC</option>

@@ -18,7 +18,7 @@ This `tatum` branch keeps the core upload/read pipeline from Floe, then adds cha
 2. Floe stages the chunks and finalizes the file to Walrus.
 3. The finalizer picks a mint path:
    - **Tatum Express** for `polygon`, `bsc`, `celo`, and `ethereum`
-   - **Tatum native minting** for `base`, `arbitrum`, `optimism`, `avalanche`, and `fantom`
+   - **Tatum native minting** for `base`, `arbitrum`, `optimism`, `avalanche`, and `eth_sepolia`
 4. The API stores the chain and mint provenance in the indexed file row.
 5. The Tatum search route returns `source: "tatum-gateway"` when the result comes from Tatum and `rpcProvider: "tatum"` so the UI can tell the user what was used.
 
@@ -42,13 +42,24 @@ Use this path when the chain needs a wallet-backed mint path:
 - `optimism` → `ETH_OP`
 - `avalanche` / `avax` → `AVAX`
 - `fantom` → `FTM`
+- `eth_sepolia` / `eth-sepolia` / `sepolia` → `ETH` with `testnetType=ethereum-sepolia`
 
 Native minting expects:
 
 - `TATUM_NATIVE_CONTRACT_ADDRESS`
+- or one of the chain-specific addresses below
 - `TATUM_TEST_PRIVATE_KEY` or `TATUM_SIGNATURE_ID`
 
 Keep those credentials in test-only or hackathon-only environments.
+
+Per-chain overrides:
+
+- `TATUM_NATIVE_CONTRACT_ADDRESS_BASE`
+- `TATUM_NATIVE_CONTRACT_ADDRESS_OPTIMISM`
+- `TATUM_NATIVE_CONTRACT_ADDRESS_ARBITRUM`
+- `TATUM_NATIVE_CONTRACT_ADDRESS_AVALANCHE`
+- `TATUM_NATIVE_CONTRACT_ADDRESS_FANTOM`
+- `TATUM_NATIVE_CONTRACT_ADDRESS_ETH_SEPOLIA`
 
 ## Local Development
 
@@ -111,6 +122,7 @@ npm run test --workspace=apps/api
 - `docs/API.md` - API routes and response contract
 - `docs/OPERATIONS.md` - runtime model, configuration, metrics, and runbook notes
 - `npm run tatum` - hackathon demo app for uploads and provenance
+- `contracts/FloeCollection.sol` - native NFT collection template for chain-by-chain deployments
 
 ## Credit
 

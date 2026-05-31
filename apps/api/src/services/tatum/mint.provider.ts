@@ -5,6 +5,7 @@ export interface TatumMintRoute {
   mode: TatumMintMode;
   requiresPrivateKey: boolean;
   requiresContractAddress: boolean;
+  testnetType?: "ethereum-sepolia";
 }
 
 const EXPRESS_CHAIN_MAP: Record<string, string> = {
@@ -25,8 +26,10 @@ const NATIVE_CHAIN_MAP: Record<string, string> = {
   avax: "AVAX",
   avalanche: "AVAX",
   base: "ETH_BASE",
+  ethsepolia: "ETH",
   fantom: "FTM",
   optimism: "ETH_OP",
+  sepolia: "ETH",
 };
 
 function normalizeChain(rawChain?: string | null) {
@@ -34,7 +37,12 @@ function normalizeChain(rawChain?: string | null) {
   if (!chain) {
     return "sui";
   }
-  return chain.replace(/[-\s]/g, "");
+  const normalized = chain.replace(/[-_\s]/g, "");
+  if (normalized === "op") return "optimism";
+  if (normalized === "arb") return "arbitrum";
+  if (normalized === "avax") return "avalanche";
+  if (normalized === "ftm") return "fantom";
+  return normalized;
 }
 
 export function resolveTatumMintRoute(rawChain?: string | null): TatumMintRoute {
@@ -56,6 +64,7 @@ export function resolveTatumMintRoute(rawChain?: string | null): TatumMintRoute 
       mode: "native",
       requiresPrivateKey: true,
       requiresContractAddress: true,
+      testnetType: normalized === "ethsepolia" || normalized === "sepolia" ? "ethereum-sepolia" : undefined,
     };
   }
 

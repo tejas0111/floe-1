@@ -54,6 +54,7 @@ import {
   readWalrusByteStream,
   readWalrusByteStreamAndCache,
 } from "../services/stream/stream.reader.js";
+import { explorerUrlFromRecord } from "../services/explorer.urls.js";
 
 function inferContainerFromMime(mimeType: string): string | null {
   const m = (mimeType ?? "").toLowerCase();
@@ -87,28 +88,6 @@ function sendFileAccessDenied(reply: any, authz: { code?: string; message?: stri
     authzErrorCode(authz.code),
     authz.message ?? "File access denied"
   );
-}
-
-function explorerUrlFromRecord(record: { targetChain: string | null; anchorTxId: string | null }): string | null {
-  if (!record.anchorTxId) return null;
-  const chain = (record.targetChain ?? "sui").toLowerCase();
-  const explorerByChain: Record<string, string> = {
-    polygon: "https://polygonscan.com/tx/",
-    matic: "https://polygonscan.com/tx/",
-    base: "https://basescan.org/tx/",
-    eth_base: "https://basescan.org/tx/",
-    arbitrum: "https://arbiscan.io/tx/",
-    eth_arb: "https://arbiscan.io/tx/",
-    optimism: "https://optimistic.etherscan.io/tx/",
-    eth_op: "https://optimistic.etherscan.io/tx/",
-    celo: "https://celoscan.io/tx/",
-    avax: "https://snowtrace.io/tx/",
-    bsc: "https://bscscan.com/tx/",
-    fantom: "https://ftmscan.com/tx/",
-    sui: "https://suivision.xyz/txblock/",
-  };
-  const base = explorerByChain[chain];
-  return base ? `${base}${encodeURIComponent(record.anchorTxId)}` : null;
 }
 
 export type StreamReadPlan = {

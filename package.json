@@ -16,13 +16,17 @@
     "start": "npm run start --workspace=apps/api",
     "upload": "./floe.sh",
     "renew": "./floe.sh renew",
+    "deploy:native-contracts": "node scripts/deploy-native-contracts.mjs",
     "bench:stream": "node scripts/stream-bench.mjs",
     "measure:stream": "node ./scripts/measure-stream.mjs",
     "lint": "npm run lint --workspaces --if-present",
     "clean": "rm -rf node_modules && npm install"
   },
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
     "@types/node": "^22.0.0",
+    "ethers": "^6.16.0",
+    "solc": "^0.8.35",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }

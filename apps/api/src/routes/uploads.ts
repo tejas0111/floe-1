@@ -316,7 +316,8 @@ export default async function uploadRoutes(app: FastifyInstance) {
       );
     }
 
-    const requestOwner = (bodyOwner as string)?.trim() || createLimit.identity.owner;
+    const headerOwner = (req.headers["x-owner-address"] as string | undefined)?.trim() || undefined;
+    const requestOwner = (bodyOwner as string)?.trim() || headerOwner || createLimit.identity.owner;
 
     if (typeof filename !== "string" || filename.length > 512) {
       return sendApiError(

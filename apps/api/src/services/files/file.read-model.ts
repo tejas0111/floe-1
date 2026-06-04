@@ -231,6 +231,18 @@ export async function getFileFieldsCached(fileId: string): Promise<CachedFileFie
       ? "healthy"
       : "degraded";
   if (memory) {
+    const normalizedMemory = normalizeFileFields(memory);
+    if (normalizedMemory && !normalizedMemory.blobObjectId) {
+      const indexed = await getIndexedFile(fileId).catch(() => null);
+      if (indexed?.blobObjectId) {
+        const mergedMemory = {
+          ...memory,
+          blob_object_id: indexed.blobObjectId,
+        };
+        setMemoryFileFields(fileId, mergedMemory);
+        return { fields: mergedMemory, source: "memory", postgresState };
+      }
+    }
     return { fields: memory, source: "memory", postgresState };
   }
 

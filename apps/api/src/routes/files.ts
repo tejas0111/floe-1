@@ -375,7 +375,7 @@ export async function filesRoutes(app: FastifyInstance) {
       return sendApiError(res, 502, "INVALID_FILE_METADATA", "File metadata is invalid");
     }
 
-    const baseUrl = (process.env.FLOE_PUBLIC_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    const baseUrl = (process.env.FLOE_PUBLIC_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
     const filename = indexed?.filename ?? `Floe File ${rawFileId.slice(0, 10)}`;
 
     return {
@@ -391,7 +391,7 @@ export async function filesRoutes(app: FastifyInstance) {
         ...(indexed?.ownerAddress ? [{ trait_type: "Owner", value: indexed.ownerAddress }] : []),
         ...(normalized.checksum ? [{ trait_type: "Checksum", value: normalized.checksum }] : []),
       ],
-      external_url: `${baseUrl}/files/${normalized.blobId}`,
+      external_url: `${baseUrl}/v1/files/${normalized.blobId}/stream`,
     };
   });
 
@@ -410,7 +410,18 @@ export async function filesRoutes(app: FastifyInstance) {
 
     const normalized = fields ? normalizeFileFields(fields) : null;
     const blobId = indexed?.blobId ?? normalized?.blobId ?? null;
-    const blobObjectId = indexed?.blobObjectId ?? normalized?.blobObjectId ?? null;
+    let blobObjectId = indexed?.blobObjectId ?? normalized?.blobObjectId ?? null;
+    if (!blobObjectId && blobId) {
+      blobObjectId = (await getBlobObjectIdByBlobId(blobId).catch(() => null)) ?? null;
+    }
+    if (!blobObjectId && blobId) {
+      const byBlob = await findFileByBlobId(blobId).catch(() => null);
+      blobObjectId = byBlob?.blobObjectId ?? null;
+    }
+    if (!blobObjectId && normalized?.checksum) {
+      const byChecksum = await findFileByChecksum(normalized.checksum).catch(() => null);
+      blobObjectId = byChecksum?.blobObjectId ?? null;
+    }
     const ownerAddress = indexed?.ownerAddress ?? normalized?.ownerAddress ?? null;
     const targetChain = indexed?.targetChain ?? null;
     const anchorTxId = indexed?.anchorTxId ?? null;
@@ -426,7 +437,6 @@ export async function filesRoutes(app: FastifyInstance) {
       explorerUrl: explorerUrlFromRecord({ targetChain, anchorTxId }),
       metadataUrl: `/v1/files/${encodeURIComponent(fileId)}/metadata.json`,
       streamUrl: `/v1/files/${encodeURIComponent(fileId)}/stream`,
-      fileUrl: `/files/${encodeURIComponent(fileId)}`,
       sizeBytes: indexed?.sizeBytes ?? normalized?.sizeBytes ?? null,
       mimeType: indexed?.mimeType ?? normalized?.mimeType ?? null,
       walrusEndEpoch: indexed?.walrusEndEpoch ?? normalized?.walrusEndEpoch ?? null,
@@ -509,11 +519,26 @@ export async function filesRoutes(app: FastifyInstance) {
       });
 
       // 2. Update Floe metadata on Sui
-      await renewFileMetadata({
-        fileId,
-        blobObjectId: !normalized.blobObjectId ? blobObjectId : undefined,
-        walrusEndEpoch: walrusResult.endEpoch,
-      });
+      try {
+        await renewFileMetadata({
+          fileId,
+          blobObjectId: !normalized.blobObjectId ? blobObjectId : undefined,
+          walrusEndEpoch: walrusResult.endEpoch,
+        });
+      } catch (metadataErr) {
+        const metadataMessage = (metadataErr as Error)?.message ?? "unknown";
+        if (
+          metadataMessage.includes("SUI_RENEW_SUBMIT_FAILED") &&
+          metadataMessage.includes("notExists")
+        ) {
+          req.log.warn(
+            { err: metadataErr, fileId },
+            "Skipping Sui renewal metadata update because the file object is missing"
+          );
+        } else {
+          throw metadataErr;
+        }
+      }
 
       // 3. Update local cache
       clearFileFieldsCache(fileId);
@@ -807,6 +832,10 @@ export async function filesRoutes(app: FastifyInstance) {
       if (cachedPath) {
         const stat = await fs.stat(cachedPath).catch(() => null);
         if (stat?.isFile() && stat.size >= end + 1) {
+          const streamStartMs = Date.now();
+          let firstByteObserved = false;
+          let totalStreamedBytes = 0;
+
           emitInfrastructureEvent(req.log, {
             event: "stream_started",
             requestId: eventContext.requestId,
@@ -829,7 +858,26 @@ export async function filesRoutes(app: FastifyInstance) {
             start,
             end,
           });
-          cachedStream.once("end", () => {
+          const stream = Readable.from(
+            (async function* () {
+              for await (const chunk of cachedStream) {
+                if (!firstByteObserved && chunk.byteLength > 0) {
+                  firstByteObserved = true;
+                  observeStreamTtfb({
+                    range: rangeHeader ? "partial" : "full",
+                    durationMs: Date.now() - streamStartMs,
+                  });
+                }
+                totalStreamedBytes += chunk.byteLength;
+                yield chunk;
+              }
+
+              if (totalStreamedBytes !== span) {
+                throw new Error(`STREAM_TRUNCATED expected=${span} read=${totalStreamedBytes}`);
+              }
+            })()
+          );
+          stream.once("end", () => {
             emitInfrastructureEvent(req.log, {
               event: "stream_completed",
               requestId: eventContext.requestId,
@@ -838,7 +886,8 @@ export async function filesRoutes(app: FastifyInstance) {
               blobId,
               outcome: "success",
               statusCode: status,
-              bytes: span,
+              bytes: totalStreamedBytes,
+              durationMs: Date.now() - streamStartMs,
               metadata: {
                 range: rangeHeader ?? null,
                 start,
@@ -847,7 +896,7 @@ export async function filesRoutes(app: FastifyInstance) {
               },
             });
           });
-          cachedStream.once("error", (err: any) => {
+          stream.once("error", (err: any) => {
             emitInfrastructureEvent(req.log, {
               event: "stream_failed",
               requestId: eventContext.requestId,
@@ -865,7 +914,7 @@ export async function filesRoutes(app: FastifyInstance) {
               },
             });
           });
-          return reply.status(status).send(cachedStream);
+          return reply.status(status).send(stream);
         }
       }
 

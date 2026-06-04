@@ -130,20 +130,21 @@ export async function getIndexedFile(
   const out = await pg.query(
     `
       select
-        file_id,
-        blob_id,
-        blob_object_id,
-        filename,
-        checksum,
-        owner_address,
-        size_bytes,
-        mime_type,
-        walrus_end_epoch,
-        target_chain,
-        anchor_tx_id,
-        created_at_ms
-      from floe_files
-      where file_id = $1
+        f.file_id,
+        f.blob_id,
+        coalesce(f.blob_object_id, m.blob_object_id) as blob_object_id,
+        f.filename,
+        f.checksum,
+        f.owner_address,
+        f.size_bytes,
+        f.mime_type,
+        f.walrus_end_epoch,
+        f.target_chain,
+        f.anchor_tx_id,
+        f.created_at_ms
+      from floe_files f
+      left join floe_blob_objects m on m.blob_id = f.blob_id
+      where f.file_id = $1
       limit 1
     `,
     [fileId]
@@ -222,21 +223,22 @@ export async function listDiscoveryFiles(params?: {
   const out = await pg.query(
     `
       select
-        file_id,
-        blob_id,
-        blob_object_id,
-        filename,
-        checksum,
-        owner_address,
-        size_bytes,
-        mime_type,
-        walrus_end_epoch,
-        target_chain,
-        anchor_tx_id,
-        created_at_ms
-      from floe_files
+        f.file_id,
+        f.blob_id,
+        coalesce(f.blob_object_id, m.blob_object_id) as blob_object_id,
+        f.filename,
+        f.checksum,
+        f.owner_address,
+        f.size_bytes,
+        f.mime_type,
+        f.walrus_end_epoch,
+        f.target_chain,
+        f.anchor_tx_id,
+        f.created_at_ms
+      from floe_files f
+      left join floe_blob_objects m on m.blob_id = f.blob_id
       ${where.length > 0 ? `where ${where.join(" and ")}` : ""}
-      order by created_at_ms desc, file_id desc
+      order by f.created_at_ms desc, f.file_id desc
       limit $${values.length}
     `,
     values
@@ -279,21 +281,22 @@ export async function findFileByChecksum(
   const out = await pg.query(
     `
       select
-        file_id,
-        blob_id,
-        blob_object_id,
-        filename,
-        checksum,
-        owner_address,
-        size_bytes,
-        mime_type,
-        walrus_end_epoch,
-        target_chain,
-        anchor_tx_id,
-        created_at_ms
-      from floe_files
-      where checksum = $1
-      order by walrus_end_epoch desc nulls last, updated_at desc, created_at_ms desc
+        f.file_id,
+        f.blob_id,
+        coalesce(f.blob_object_id, m.blob_object_id) as blob_object_id,
+        f.filename,
+        f.checksum,
+        f.owner_address,
+        f.size_bytes,
+        f.mime_type,
+        f.walrus_end_epoch,
+        f.target_chain,
+        f.anchor_tx_id,
+        f.created_at_ms
+      from floe_files f
+      left join floe_blob_objects m on m.blob_id = f.blob_id
+      where f.checksum = $1
+      order by f.walrus_end_epoch desc nulls last, f.updated_at desc, f.created_at_ms desc
       limit 1
     `,
     [checksum]
@@ -330,21 +333,22 @@ export async function findFileByBlobId(
   const out = await pg.query(
     `
       select
-        file_id,
-        blob_id,
-        blob_object_id,
-        filename,
-        checksum,
-        owner_address,
-        size_bytes,
-        mime_type,
-        walrus_end_epoch,
-        target_chain,
-        anchor_tx_id,
-        created_at_ms
-      from floe_files
-      where blob_id = $1
-      order by walrus_end_epoch desc nulls last, updated_at desc, created_at_ms desc
+        f.file_id,
+        f.blob_id,
+        coalesce(f.blob_object_id, m.blob_object_id) as blob_object_id,
+        f.filename,
+        f.checksum,
+        f.owner_address,
+        f.size_bytes,
+        f.mime_type,
+        f.walrus_end_epoch,
+        f.target_chain,
+        f.anchor_tx_id,
+        f.created_at_ms
+      from floe_files f
+      left join floe_blob_objects m on m.blob_id = f.blob_id
+      where f.blob_id = $1
+      order by f.walrus_end_epoch desc nulls last, f.updated_at desc, f.created_at_ms desc
       limit 1
     `,
     [blobId]

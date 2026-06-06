@@ -46,6 +46,7 @@ import {
 } from "../services/events/infrastructure.events.js";
 import {
   createCachedReadStream,
+  ensureCachedStreamRange,
   getCachedStreamPath,
   getStreamCachePath,
   shouldCacheFullObject,
@@ -259,7 +260,7 @@ async function* cachedSegmentByteStream(params: {
         throw err;
       }
 
-      for await (const chunk of walrusByteStream({
+      for await (const chunk of readWalrusByteStream({
         blobId: params.blobId,
         start: offset,
         end: segmentEnd,
@@ -273,44 +274,6 @@ async function* cachedSegmentByteStream(params: {
 
     offset = segmentEnd + 1;
   }
-}
-
-export function chooseStreamReadPlan(params: {
-  sizeBytes: number;
-  hasRangeHeader: boolean;
-}): StreamReadPlan {
-  const boundedMediaSegment = Math.min(
-    WalrusReadLimits.maxRangeBytes,
-    WalrusReadLimits.mediaSegmentBytes
-  );
-  const boundedInitialSegment = Math.min(
-    WalrusReadLimits.maxRangeBytes,
-    Math.max(
-      boundedMediaSegment,
-      WalrusReadLimits.initialSegmentBytes,
-      WalrusReadLimits.inlineFullObjectMaxBytes
-    )
-  );
-
-  if (params.hasRangeHeader) {
-    return {
-      initialSegmentBytes: boundedMediaSegment,
-      segmentBytes: boundedMediaSegment,
-    };
-  }
-
-  if (params.sizeBytes <= WalrusReadLimits.inlineFullObjectMaxBytes) {
-    const fullSize = Math.min(params.sizeBytes, WalrusReadLimits.maxRangeBytes);
-    return {
-      initialSegmentBytes: fullSize,
-      segmentBytes: fullSize,
-    };
-  }
-
-  return {
-    initialSegmentBytes: boundedInitialSegment,
-    segmentBytes: boundedMediaSegment,
-  };
 }
 
 export async function filesRoutes(app: FastifyInstance) {

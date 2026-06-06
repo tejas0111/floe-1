@@ -47,7 +47,6 @@ export type CreateUploadInput = {
   filename: string;
   contentType: string;
   sizeBytes: number;
-  checksum?: string;
   chunkSize?: number;
   epochs?: number;
   targetChain?: string;
@@ -211,11 +210,9 @@ export type UploadStageEvent = {
   pollAfterMs?: number;
   attempt?: number;
 };
-
 export type UploadBlobOptions = {
   filename: string;
   contentType?: string;
-  checksum?: string;
   chunkSize?: number;
   epochs?: number;
   parallel?: number;

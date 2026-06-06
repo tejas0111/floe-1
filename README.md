@@ -61,7 +61,7 @@ Copy `.env.example` to `.env` and fill in your keys:
 TATUM_API_KEY=your_key_here
 WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.site
 
-# Tatum RPC Nodes (Highly recommended for hackathon judging)
+# Tatum RPC Nodes (Recommended for production stability)
 TATUM_RPC_URL_SEPOLIA=https://api.tatum.io/v3/blockchain/node/ethereum-sepolia/your_key
 ```
 

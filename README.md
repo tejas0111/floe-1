@@ -50,8 +50,8 @@ Modern dApps face a dilemma: **Decentralized storage is fragmented.**
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/tejas0111/floe.git
-cd floe
+git clone https://github.com/tejas0111/floe-1.git
+cd floe-1
 npm install
 ```
 

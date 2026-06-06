@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { FloeApiError, FloeClient, SDK_VERSION, createNodeFileResumeStore } from "@floehq/sdk";
+import { FloeApiError, FloeClient, SDK_VERSION, createNodeFileResumeStore, type UploadProgress } from "@tejas0111/sdk";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1186,7 +1186,7 @@ async function runUpload(filePathRaw: string | undefined, options: CliOptions) {
     ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
     ...(options.pollIntervalMs ? { finalizePollIntervalMs: options.pollIntervalMs } : {}),
     ...(options.maxWaitMs ? { finalizeMaxWaitMs: options.maxWaitMs } : {}),
-    onProgress(progress) {
+    onProgress(progress: UploadProgress) {
       if (options.json) return;
       progressLineOpen = true;
       const line = [

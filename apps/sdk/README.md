@@ -83,6 +83,11 @@ The returned result will include:
 - `targetChain`: The chain where the anchor was created.
 - `walrusEndEpoch`: The Walrus storage epoch expiration for the file.
 
+#### Using Tatum RPC Nodes
+For native minting or blockchain introspection, it is recommended to use Tatum's blockchain nodes. You can configure these in your environment:
+- `TATUM_RPC_URL_SEPOLIA=https://api.tatum.io/v3/blockchain/node/ethereum-sepolia/YOUR_API_KEY`
+- `TATUM_RPC_URL_BASE=https://api.tatum.io/v3/blockchain/node/base-sepolia/YOUR_API_KEY`
+
 
 ## Stream Introspection And Node Downloads
 

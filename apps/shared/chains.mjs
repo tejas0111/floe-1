@@ -151,5 +151,10 @@ export function resolveNativeContractAddress(rawChain) {
 
 export function resolveNativeMintRpcUrl(rawChain) {
   const chain = normalizeChain(rawChain);
+  const envVar = `TATUM_RPC_URL_${chain.toUpperCase().replace(/[-]/g, "_")}`;
+  const envValue = process.env[envVar]?.trim();
+  if (envValue) {
+    return envValue;
+  }
   return NATIVE_RPC_URL_BY_CHAIN[chain] ?? NATIVE_RPC_URL_BY_CHAIN.base;
 }

@@ -55,11 +55,14 @@ cd floe-1
 npm install
 ```
 
-### 2. Environment Setup
+### Environment Setup
 Copy `.env.example` to `.env` and fill in your keys:
 ```bash
 TATUM_API_KEY=your_key_here
 WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.site
+
+# Tatum RPC Nodes (Highly recommended for hackathon judging)
+TATUM_RPC_URL_SEPOLIA=https://api.tatum.io/v3/blockchain/node/ethereum-sepolia/your_key
 ```
 
 ### 3. Launch the Demo

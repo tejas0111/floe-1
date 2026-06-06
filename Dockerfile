@@ -1,5 +1,5 @@
 # Multi-stage build for Floe API
-FROM node:20-bookworm-slim AS deps
+FROM node:22-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ COPY . .
 RUN npm run build --workspace=apps/api
 RUN npm prune --omit=dev --workspaces
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=3001

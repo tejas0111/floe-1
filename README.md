@@ -72,25 +72,29 @@ This starts the **API** (Port 3011) and the **Dashboard** (Port 3012).
 
 ## 📦 Developer Tools
 
-### CLI
-```bash
-npm install -g @floehq/cli
-floe upload my-video.mp4 --chain base
-```
+Floe provides a unified developer experience with Tatum-native anchoring built into every tool.
 
-### SDK
+### 💻 CLI
+The Floe CLI allows you to upload and anchor files directly from your terminal.
+- **Install:** `npm install -g @floehq/cli`
+- **Tatum Anchor:** `floe upload movie.mp4 --target-chain base`
+- [View CLI Documentation](apps/cli/README.md)
+
+### 📚 SDK (TypeScript)
+Integrate Walrus storage and Tatum anchoring into your own applications with just a few lines of code.
+- **Install:** `npm install @floehq/sdk`
+- **Usage:**
 ```typescript
 import { FloeClient } from '@floehq/sdk';
-
-const floe = new FloeClient({ apiKey: '...' });
-const result = await floe.upload(fileBuffer, { anchorChain: 'polygon' });
-console.log(`Anchored at: ${result.anchorTxId}`);
+const result = await floe.uploadFile("./image.png", { targetChain: "sepolia" });
+console.log(`Anchored on Sepolia: ${result.anchorTxId}`);
 ```
+- [View SDK Documentation](apps/sdk/README.md)
 
-### Bash Wrapper
-```bash
-./scripts/floe.sh upload test.txt --target-chain sepolia
-```
+### 🐚 Bash Wrapper
+A lightweight, zero-dependency script for quick uploads and integration into CI/CD pipelines.
+- **Usage:** `./scripts/floe.sh upload test.txt --target-chain polygon`
+- [View Bash Script Source](scripts/floe.sh)
 
 ---
 

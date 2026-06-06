@@ -55,6 +55,7 @@ const floe = new FloeClient({
 });
 
 const result = await floe.uploadFile("./video.mp4", {
+  targetChain: "base",
   includeBlobId: true,
   includeWalrusDebug: true,
   idempotencyKey: "upload-video-1",
@@ -66,8 +67,22 @@ const result = await floe.uploadFile("./video.mp4", {
   },
 });
 
-console.log(result.fileId, result.blobId, result.walrusDebug);
+console.log(result.fileId, result.blobId, result.anchorTxId, result.targetChain);
 ```
+
+### Tatum Anchoring Support
+
+The SDK supports anchoring file provenance across multiple chains via Tatum. Pass the `targetChain` option to any upload method:
+
+- `uploadFile(path, { targetChain: 'sepolia' })`
+- `uploadBytes(data, { targetChain: 'polygon' })`
+- `uploadBlob(blob, { targetChain: 'base' })`
+
+The returned result will include:
+- `anchorTxId`: The transaction hash of the provenance anchor on the destination chain.
+- `targetChain`: The chain where the anchor was created.
+- `walrusEndEpoch`: The Walrus storage epoch expiration for the file.
+
 
 ## Stream Introspection And Node Downloads
 

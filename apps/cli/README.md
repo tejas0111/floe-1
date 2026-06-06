@@ -34,14 +34,15 @@ floe config set base-url http://localhost:3000/v1
 floe config unset api-key
 ```
 
-Useful flags for the newer upload contract:
+Useful flags for the newer upload contract and Tatum anchoring:
 
 ```bash
-floe upload ./video.mp4 --include-blob-id --include-walrus-debug --idempotency-key upload-video-1
-floe upload complete <uploadId> --idempotency-key complete-upload-1
-floe upload cancel <uploadId> --idempotency-key cancel-upload-1
+floe upload ./video.mp4 --target-chain base --include-blob-id --include-walrus-debug
+floe upload ./image.png --target-chain sepolia
 floe upload status <uploadId> --include-walrus-debug
 ```
+
+Supported `--target-chain` values include: `sepolia`, `base`, `polygon`, `arbitrum`, `optimism`, `avalanche`, `bsc`, `celo`, `fantom`, `ethereum`.
 
 Shortcuts are also supported for the most common lookups:
 

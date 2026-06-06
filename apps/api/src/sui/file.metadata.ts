@@ -118,3 +118,41 @@ export async function renewFileMetadata(params: {
     );
   }
 }
+
+export async function renewFileMetadata(params: {
+  fileId: string;
+  blobObjectId?: string;
+  walrusEndEpoch: number;
+}): Promise<void> {
+  const tx = new Transaction();
+
+  if (params.blobObjectId) {
+    tx.moveCall({
+      target: `${SUI_PACKAGE_ID}::file::update_walrus_info`,
+      arguments: [
+        tx.object(params.fileId),
+        tx.pure.address(params.blobObjectId),
+        tx.pure.u64(params.walrusEndEpoch),
+      ],
+    });
+  } else {
+    tx.moveCall({
+      target: `${SUI_PACKAGE_ID}::file::update_expiry`,
+      arguments: [
+        tx.object(params.fileId),
+        tx.pure.u64(params.walrusEndEpoch),
+      ],
+    });
+  }
+
+  try {
+    await suiClient.signAndExecuteTransaction({
+      transaction: tx,
+      signer: suiSigner,
+    });
+  } catch (err) {
+    throw new Error(
+      `SUI_RENEW_SUBMIT_FAILED:${(err as Error)?.message ?? "unknown"}`
+    );
+  }
+}

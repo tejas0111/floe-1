@@ -212,6 +212,107 @@ async function resolveFileFields(id: string): Promise<CachedFileFieldsResult> {
   return out;
 }
 
+async function* cachedSegmentByteStream(params: {
+  blobId: string;
+  start: number;
+  end: number;
+  initialSegmentBytes: number;
+  segmentBytes: number;
+  signal: AbortSignal;
+}): AsyncGenerator<Uint8Array> {
+  let offset = params.start;
+
+  while (offset <= params.end) {
+    if (params.signal.aborted) return;
+
+    const preferredSegmentBytes =
+      offset === params.start ? params.initialSegmentBytes : params.segmentBytes;
+    const segmentEnd = Math.min(params.end, offset + preferredSegmentBytes - 1);
+    const expected = segmentEnd - offset + 1;
+    try {
+      const cachePath = await ensureCachedStreamRange({
+        blobId: params.blobId,
+        start: offset,
+        end: segmentEnd,
+        signal: params.signal,
+      });
+
+      const rs = createCachedReadStream({
+        filePath: cachePath,
+        start: 0,
+        end: segmentEnd - offset,
+      });
+
+      let read = 0;
+      for await (const chunk of rs) {
+        if (params.signal.aborted) return;
+        const buf = chunk as Uint8Array;
+        read += buf.byteLength;
+        yield buf;
+      }
+
+      if (read !== expected) {
+        throw new Error(`STREAM_CACHE_RANGE_TRUNCATED expected=${expected} read=${read}`);
+      }
+    } catch (err) {
+      if ((err as Error)?.message !== "STREAM_CACHE_CAPACITY_EXCEEDED") {
+        throw err;
+      }
+
+      for await (const chunk of walrusByteStream({
+        blobId: params.blobId,
+        start: offset,
+        end: segmentEnd,
+        maxSegmentBytes: params.segmentBytes,
+        initialSegmentBytes: expected,
+        signal: params.signal,
+      })) {
+        yield chunk;
+      }
+    }
+
+    offset = segmentEnd + 1;
+  }
+}
+
+export function chooseStreamReadPlan(params: {
+  sizeBytes: number;
+  hasRangeHeader: boolean;
+}): StreamReadPlan {
+  const boundedMediaSegment = Math.min(
+    WalrusReadLimits.maxRangeBytes,
+    WalrusReadLimits.mediaSegmentBytes
+  );
+  const boundedInitialSegment = Math.min(
+    WalrusReadLimits.maxRangeBytes,
+    Math.max(
+      boundedMediaSegment,
+      WalrusReadLimits.initialSegmentBytes,
+      WalrusReadLimits.inlineFullObjectMaxBytes
+    )
+  );
+
+  if (params.hasRangeHeader) {
+    return {
+      initialSegmentBytes: boundedMediaSegment,
+      segmentBytes: boundedMediaSegment,
+    };
+  }
+
+  if (params.sizeBytes <= WalrusReadLimits.inlineFullObjectMaxBytes) {
+    const fullSize = Math.min(params.sizeBytes, WalrusReadLimits.maxRangeBytes);
+    return {
+      initialSegmentBytes: fullSize,
+      segmentBytes: fullSize,
+    };
+  }
+
+  return {
+    initialSegmentBytes: boundedInitialSegment,
+    segmentBytes: boundedMediaSegment,
+  };
+}
+
 export async function filesRoutes(app: FastifyInstance) {
   app.get("/v1/files", async (req, res) => {
     const query = req.query as Record<string, string | undefined>;

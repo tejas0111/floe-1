@@ -79,6 +79,15 @@ function secureEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
+function authzStatusCode(code?: string): 401 | 403 {
+  return code === "AUTH_REQUIRED" ? 401 : 403;
+}
+
+function authzErrorCode(code?: string): "AUTH_REQUIRED" | "INSUFFICIENT_SCOPE" {
+  if (code === "AUTH_REQUIRED") return "AUTH_REQUIRED";
+  return "INSUFFICIENT_SCOPE";
+}
+
 function requireMetricsToken(req: any, reply: any): boolean {
   if (!METRICS_ENABLED) {
     sendApiError(reply, 404, "FILE_NOT_FOUND", "Not Found");

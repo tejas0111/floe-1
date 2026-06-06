@@ -412,6 +412,151 @@ test("authenticated create still persists an explicit x-owner-address header", a
   assert.equal(session?.targetChain, "eth");
 });
 
+test("create rejects authenticated keys missing uploads:write scope", async () => {
+  const app = await createRouteApp({
+    async authorizeUploadAccess() {
+      return {
+        allowed: false,
+        code: "INSUFFICIENT_SCOPE",
+        message: "API key is missing required scope: uploads:write",
+      };
+    },
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+    },
+  });
+  const body = res.json();
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(body.error.code, "INSUFFICIENT_SCOPE");
+  assert.equal(body.error.message.includes("uploads:write"), true);
+});
+
+test("create replays the original response for the same idempotency key and payload", async () => {
+  const app = await createRouteApp();
+  const body = {
+    filename: "video.mp4",
+    contentType: "video/mp4",
+    sizeBytes: 8,
+    chunkSize: 4,
+    epochs: 2,
+  };
+
+  const first = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-1" },
+    body,
+  });
+  const second = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-1" },
+    body,
+  });
+
+  const firstBody = first.json();
+  const secondBody = second.json();
+  const redis = redisModule.getRedis();
+  const { uploadKeys } = keysModule;
+  const activeIds = await redis.smembers<string[]>(uploadKeys.activeIndex());
+
+  assert.equal(first.statusCode, 201);
+  assert.equal(second.statusCode, 201);
+  assert.equal(second.headers["idempotency-replayed"], "true");
+  assert.equal(secondBody.uploadId, firstBody.uploadId);
+  assert.equal(secondBody.chunkSize, firstBody.chunkSize);
+  assert.equal(secondBody.totalChunks, firstBody.totalChunks);
+  assert.equal(secondBody.epochs, firstBody.epochs);
+  assert.equal(activeIds.filter((id) => id === firstBody.uploadId).length, 1);
+  assert.equal(activeIds.length, 1);
+});
+
+test("create rejects reusing an idempotency key with a different payload", async () => {
+  const app = await createRouteApp();
+
+  const first = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-2" },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+      chunkSize: 4,
+    },
+  });
+  const second = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-2" },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 16,
+      chunkSize: 4,
+    },
+  });
+
+  const secondBody = second.json();
+  const redis = redisModule.getRedis();
+  const { uploadKeys } = keysModule;
+  const activeIds = await redis.smembers<string[]>(uploadKeys.activeIndex());
+
+  assert.equal(first.statusCode, 201);
+  assert.equal(second.statusCode, 409);
+  assert.equal(secondBody.error.code, "IDEMPOTENCY_KEY_REUSED");
+  assert.equal(activeIds.length, 1);
+});
+
+test("create rejects reusing an idempotency key with a different checksum", async () => {
+  const app = await createRouteApp();
+
+  const first = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-checksum" },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+      chunkSize: 4,
+      checksum: "a".repeat(64),
+    },
+  });
+  const second = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "idempotency-key": "create-upload-checksum" },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+      chunkSize: 4,
+      checksum: "b".repeat(64),
+    },
+  });
+
+  const secondBody = second.json();
+  assert.equal(first.statusCode, 201);
+  assert.equal(second.statusCode, 409);
+  assert.equal(secondBody.error.code, "IDEMPOTENCY_KEY_REUSED");
+});
+
 afterEach(async () => {
   const redis = redisModule.getRedis();
   const { uploadKeys } = keysModule;

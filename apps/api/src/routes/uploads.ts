@@ -96,6 +96,16 @@ function finalizePollRetryAfterSeconds(): string {
   return String(Math.max(1, Math.ceil(FINALIZE_POLL_AFTER_MS / 1000)));
 }
 
+function authzErrorCode(code?: string): "AUTH_REQUIRED" | "OWNER_MISMATCH" | "INSUFFICIENT_SCOPE" {
+  if (code === "AUTH_REQUIRED") return "AUTH_REQUIRED";
+  if (code === "INSUFFICIENT_SCOPE") return "INSUFFICIENT_SCOPE";
+  return "OWNER_MISMATCH";
+}
+
+function finalizePollRetryAfterSeconds(): string {
+  return String(Math.max(1, Math.ceil(FINALIZE_POLL_AFTER_MS / 1000)));
+}
+
 function readExpiresAt(meta?: Record<string, string> | null, session?: { expiresAt: number } | null): number | null {
   if (session?.expiresAt && Number.isFinite(session.expiresAt)) {
     return session.expiresAt;

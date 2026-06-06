@@ -1,10 +1,10 @@
 {
-  "name": "@floehq/cli",
-  "version": "0.2.5",
-  "description": "Command-line interface for the Floe API",
+  "name": "@tejas0111/cli",
+  "version": "0.2.6-tatum",
+  "description": "Command-line interface for the Floe API (Tatum Edition)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/floehq/floe.git",
+    "url": "git+https://github.com/tejas0111/floe-1.git",
     "directory": "apps/cli"
   },
   "homepage": "https://github.com/floehq/floe/tree/main/apps/cli",
@@ -25,9 +25,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@floehq/sdk": "^0.2.5"
+    "@tejas0111/sdk": "^0.2.6-tatum"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   }
 }

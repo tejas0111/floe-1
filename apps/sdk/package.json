@@ -1,10 +1,10 @@
 {
-  "name": "@floehq/sdk",
-  "version": "0.2.5",
-  "description": "TypeScript SDK for the Floe upload and file API",
+  "name": "@tejas0111/sdk",
+  "version": "0.2.6-tatum",
+  "description": "TypeScript SDK for the Floe upload and file API (Tatum Edition)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/floehq/floe.git",
+    "url": "git+https://github.com/tejas0111/floe-1.git",
     "directory": "apps/sdk"
   },
   "homepage": "https://github.com/floehq/floe/tree/main/apps/sdk",
@@ -33,7 +33,7 @@
     "test": "npm run build && node --test ./test/*.test.mjs"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
     "@tatumio/tatum": "^4.2.58"

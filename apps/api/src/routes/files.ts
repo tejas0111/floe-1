@@ -12,6 +12,7 @@ import {
 } from "../db/files.repository.js";
 import { renewWalrusBlob } from "../services/walrus/renew.js";
 import { getCurrentWalrusEpoch } from "../services/walrus/epoch.js";
+import { getWalrusBlobState } from "../services/walrus/blob.js";
 import { renewFileMetadata } from "../sui/file.metadata.js";
 import { WalrusReadLimits } from "../config/walrus.config.js";
 import { sendApiError } from "../utils/apiError.js";
@@ -55,6 +56,7 @@ import {
   readWalrusByteStreamAndCache,
 } from "../services/stream/stream.reader.js";
 import { explorerUrlFromRecord } from "../services/explorer.urls.js";
+import { classifyWalrusRenewFailure } from "../services/walrus/renew.failure.js";
 
 function inferContainerFromMime(mimeType: string): string | null {
   const m = (mimeType ?? "").toLowerCase();
@@ -381,7 +383,7 @@ export async function filesRoutes(app: FastifyInstance) {
     return {
       name: filename,
       description: `Floe Decentralized File: ${normalized.blobId}`,
-      image: `${baseUrl}/v1/files/${normalized.blobId}/stream`,
+      image: `${baseUrl}/v1/files/${encodeURIComponent(rawFileId)}/stream`,
       attributes: [
         { trait_type: "Blob ID", value: normalized.blobId },
         { trait_type: "Size", value: normalized.sizeBytes },
@@ -389,9 +391,10 @@ export async function filesRoutes(app: FastifyInstance) {
         ...(indexed?.targetChain ? [{ trait_type: "Chain", value: indexed.targetChain }] : []),
         ...(indexed?.anchorTxId ? [{ trait_type: "Anchor Tx", value: indexed.anchorTxId }] : []),
         ...(indexed?.ownerAddress ? [{ trait_type: "Owner", value: indexed.ownerAddress }] : []),
+        ...(normalized.walrusEndEpoch !== null ? [{ trait_type: "Walrus End Epoch", value: normalized.walrusEndEpoch }] : []),
         ...(normalized.checksum ? [{ trait_type: "Checksum", value: normalized.checksum }] : []),
       ],
-      external_url: `${baseUrl}/v1/files/${normalized.blobId}/stream`,
+      external_url: `${baseUrl}/v1/files/${encodeURIComponent(rawFileId)}/stream`,
     };
   });
 
@@ -426,6 +429,45 @@ export async function filesRoutes(app: FastifyInstance) {
     const targetChain = indexed?.targetChain ?? null;
     const anchorTxId = indexed?.anchorTxId ?? null;
 
+    let walrusEndEpoch = indexed?.walrusEndEpoch ?? normalized?.walrusEndEpoch ?? null;
+    if (walrusEndEpoch === null && blobObjectId) {
+      try {
+        const blobState = await getWalrusBlobState(blobObjectId);
+        if (blobState.endEpoch !== null) {
+          walrusEndEpoch = blobState.endEpoch;
+
+          // Backfill local index for faster subsequent lookups
+          if (indexed) {
+            await upsertIndexedFile({
+              ...indexed,
+              walrusEndEpoch,
+            }).catch(() => {});
+          }
+        }
+      } catch (err) {
+        req.log.warn({ err, blobObjectId }, "Failed to enrich walrusEndEpoch from blob object");
+      }
+    }
+
+    // Estimate expiry status
+    let expiryStatus: any = null;
+    if (walrusEndEpoch !== null) {
+      try {
+        const currentEpoch = await getCurrentWalrusEpoch();
+        if (currentEpoch !== null) {
+          const epochsRemaining = Math.max(0, walrusEndEpoch - currentEpoch);
+          expiryStatus = {
+            currentEpoch,
+            endEpoch: walrusEndEpoch,
+            epochsRemaining,
+            isExpired: walrusEndEpoch < currentEpoch,
+          };
+        }
+      } catch (err) {
+        req.log.warn({ err }, "Failed to fetch Walrus epoch for expiry estimation");
+      }
+    }
+
     return {
       fileId,
       filename: indexed?.filename ?? null,
@@ -439,7 +481,8 @@ export async function filesRoutes(app: FastifyInstance) {
       streamUrl: `/v1/files/${encodeURIComponent(fileId)}/stream`,
       sizeBytes: indexed?.sizeBytes ?? normalized?.sizeBytes ?? null,
       mimeType: indexed?.mimeType ?? normalized?.mimeType ?? null,
-      walrusEndEpoch: indexed?.walrusEndEpoch ?? normalized?.walrusEndEpoch ?? null,
+      walrusEndEpoch,
+      expiryStatus,
       createdAtMs: indexed?.createdAtMs ?? normalized?.createdAt ?? null,
     };
   });
@@ -513,10 +556,30 @@ export async function filesRoutes(app: FastifyInstance) {
 
     try {
       // 1. Extend Walrus storage
-      const walrusResult = await renewWalrusBlob({
-        blobObjectId,
-        epochs,
-      });
+      let walrusResult;
+      try {
+        walrusResult = await renewWalrusBlob({
+          blobObjectId,
+          epochs,
+        });
+      } catch (err) {
+        const detail = (err as Error)?.message ?? "unknown";
+        const classified = classifyWalrusRenewFailure(detail);
+        if (classified) {
+          req.log.warn(
+            { err, fileId, blobObjectId, epochs },
+            "Walrus renewal failed before metadata update"
+          );
+          return sendApiError(
+            res,
+            classified.statusCode,
+            classified.code,
+            classified.message,
+            { retryable: classified.retryable }
+          );
+        }
+        throw err;
+      }
 
       // 2. Update Floe metadata on Sui
       try {

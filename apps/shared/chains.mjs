@@ -32,8 +32,11 @@ export const CHAIN_LABELS = {
 };
 
 export const CHAIN_EXPLORERS = {
-  polygon: "https://polygonscan.com/tx/",
-  matic: "https://polygonscan.com/tx/",
+  eth: "https://etherscan.io/tx/",
+  ethereum: "https://etherscan.io/tx/",
+  mainnet: "https://etherscan.io/tx/",
+  polygon: "https://amoy.polygonscan.com/tx/",
+  matic: "https://amoy.polygonscan.com/tx/",
   base: "https://sepolia.basescan.org/tx/",
   arbitrum: "https://sepolia.arbiscan.io/tx/",
   optimism: "https://testnet-explorer.optimism.io/tx/",
@@ -42,7 +45,7 @@ export const CHAIN_EXPLORERS = {
   avalanche: "https://c.testnet.snowtrace.io/tx/",
   bsc: "https://bscscan.com/tx/",
   fantom: "https://testnet.ftmscan.com/tx/",
-  sui: "https://suivision.xyz/txblock/",
+  sui: "https://testnet.suivision.xyz/txblock/",
 };
 
 export const EXPRESS_CHAIN_MAP = {
@@ -116,7 +119,6 @@ export function resolveTatumMintRoute(rawChain) {
       requiresContractAddress: false,
     };
   }
-
   const nativeChain = NATIVE_CHAIN_MAP[normalized];
   if (nativeChain) {
     return {
@@ -127,7 +129,6 @@ export function resolveTatumMintRoute(rawChain) {
       testnetType: normalized === "ethsepolia" || normalized === "sepolia" ? "ethereum-sepolia" : undefined,
     };
   }
-
   throw new Error(`UNSUPPORTED_TATUM_CHAIN:${rawChain ?? "sui"}`);
 }
 
@@ -137,17 +138,14 @@ export function resolveNativeContractAddress(rawChain) {
   if (!specificEnvVar) {
     return { chain, contractAddress: null, envVar: null };
   }
-
   const specificValue = process.env[specificEnvVar]?.trim() ?? "";
   if (specificValue) {
     return { chain, contractAddress: specificValue, envVar: specificEnvVar };
   }
-
   const fallbackValue = process.env.TATUM_NATIVE_CONTRACT_ADDRESS?.trim() ?? "";
   if (fallbackValue) {
     return { chain, contractAddress: fallbackValue, envVar: "TATUM_NATIVE_CONTRACT_ADDRESS" };
   }
-
   return { chain, contractAddress: null, envVar: specificEnvVar };
 }
 

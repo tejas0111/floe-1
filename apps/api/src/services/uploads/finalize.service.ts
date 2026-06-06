@@ -34,6 +34,11 @@ import {
   shouldPersistFinalizeFailure,
   type FinalizeFailureCode,
 } from "./finalize.shared.js";
+import { classifyWalrusRenewFailure } from "../walrus/renew.failure.js";
+import {
+  resolveNativeFinalizeRecipient,
+  resolveSuiFinalizeOwner,
+} from "./owner-routing.js";
 import { emitInfrastructureEvent } from "../events/infrastructure.events.js";
 
 const finalFilePath = (uploadId: string) =>
@@ -187,6 +192,14 @@ async function resolveReusableWalrusBlob(params: {
       blobObjectId,
       epochs: missingEpochs,
     }).catch((err) => {
+      const classified = classifyWalrusRenewFailure((err as Error)?.message ?? "unknown");
+      if (classified) {
+        const code =
+          classified.code === "DEPENDENCY_UNAVAILABLE"
+            ? "WALRUS_RENEW_DEPENDENCY_UNAVAILABLE"
+            : "WALRUS_RENEW_BLOB_UNAVAILABLE";
+        throw new Error(`${code}: ${classified.message}`);
+      }
       params.log?.warn(
         { err, blobObjectId, missingEpochs, checksum },
         "Failed to extend reusable Walrus blob during finalize"
@@ -371,6 +384,7 @@ export async function finalizeUpload(
       meta?.walrusSource === "unknown"
         ? meta.walrusSource
         : undefined;
+    let finalizedOwnerAddress: string | null = meta?.owner ?? session.owner ?? null;
 
     if (!blobId) {
       assertFinalizeLockHealthy();
@@ -441,13 +455,24 @@ export async function finalizeUpload(
         const metadataStartedAt = Date.now();
         try {
           if (isSui) {
+            const resolvedOwner = resolveSuiFinalizeOwner(session.owner);
+            finalizedOwnerAddress = resolvedOwner ?? null;
+            context.log?.info(
+              {
+                uploadId,
+                targetChain: session.targetChain ?? "sui",
+                requestedOwner: session.owner ?? null,
+                resolvedOwner: finalizedOwnerAddress,
+              },
+              "Finalizing Sui metadata"
+            );
             const result = await finalizeFileMetadata({
               blobId,
               blobObjectId: walrusObjectId,
               sizeBytes: session.sizeBytes,
               mimeType: session.contentType ?? "application/octet-stream",
               checksum,
-              owner: session.owner,
+              owner: resolvedOwner,
               walrusEndEpoch,
             });
             observeSuiFinalize({
@@ -459,9 +484,17 @@ export async function finalizeUpload(
             // Tatum Multi-Chain Anchor
             // If session.owner is a Sui address or missing, it will fail on EVM.
             // We use a valid fallback address that Tatum supports for gasless minting.
-            const evmRecipient = (session.owner && session.owner.startsWith("0x") && session.owner.length === 42)
-              ? session.owner
-              : "0x49678AAB11E001eb3cB2cBD9aA96b36DC2461A94"; // Tatum Polygon Minter as fallback
+            const evmRecipient = resolveNativeFinalizeRecipient(session.owner);
+            finalizedOwnerAddress = evmRecipient;
+            context.log?.info(
+              {
+                uploadId,
+                targetChain: session.targetChain,
+                requestedOwner: session.owner ?? null,
+                resolvedRecipient: evmRecipient,
+              },
+              "Finalizing native EVM metadata"
+            );
 
             const result = await anchorMetadataMultiChain({
               chain: session.targetChain!,
@@ -529,17 +562,17 @@ export async function finalizeUpload(
     }
     committedCompletedState = true;
 
-    await upsertIndexedFile({
-      fileId,
-      blobId,
-      blobObjectId: walrusObjectId ?? null,
-      filename: session.filename,
-      checksum: checksum ?? null,
-      ownerAddress: session.owner ?? null,
-      sizeBytes: session.sizeBytes,
-      mimeType: session.contentType ?? "application/octet-stream",
-      walrusEndEpoch: walrusEndEpoch ?? null,
-      targetChain: session.targetChain ?? null,
+      await upsertIndexedFile({
+        fileId,
+        blobId,
+        blobObjectId: walrusObjectId ?? null,
+        filename: session.filename,
+        checksum: checksum ?? null,
+        ownerAddress: finalizedOwnerAddress,
+        sizeBytes: session.sizeBytes,
+        mimeType: session.contentType ?? "application/octet-stream",
+        walrusEndEpoch: walrusEndEpoch ?? null,
+        targetChain: session.targetChain ?? null,
       anchorTxId: anchorTxId ?? null,
       createdAtMs: Date.now(),
     }).catch(() => {});
@@ -600,7 +633,8 @@ export async function finalizeUpload(
       bytes: session.sizeBytes,
       durationMs: finalizeTotalMs,
       metadata: {
-        owner: session.owner ?? null,
+        owner: finalizedOwnerAddress,
+        requestedOwner: session.owner ?? null,
         attempt: context.attempt ?? 1,
         queueWaitMs: context.queueWaitMs ?? 0,
         walrusEndEpoch: walrusEndEpoch ?? null,

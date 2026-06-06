@@ -1,4 +1,5 @@
 import { suiNetwork } from "../../state/sui.js";
+import { parseOptionalU64 } from "../files/file.read-model.js";
 
 const TATUM_API_KEY = process.env.TATUM_API_KEY;
 const SUI_PACKAGE_ID = process.env.SUI_PACKAGE_ID;
@@ -16,12 +17,16 @@ export interface FileMetaSearchQuery {
 }
 
 export interface FileMetaSearchResult {
-  objectId: string;
-  version: string;
-  digest: string;
-  type: string;
-  owner: string;
-  content: any;
+  fileId: string;
+  blobId: string;
+  blobObjectId: string | null;
+  checksum: string | null;
+  sizeBytes: number | null;
+  mimeType: string | null;
+  ownerAddress: string | null;
+  walrusEndEpoch: number | null;
+  createdAtMs: number | null;
+  targetChain: string;
 }
 
 export async function searchGlobalFiles(query: FileMetaSearchQuery) {
@@ -90,14 +95,21 @@ export async function searchGlobalFiles(query: FileMetaSearchQuery) {
       throw new Error(`TATUM_SUI_QUERY_ERROR:${JSON.stringify(json.error)}`);
     }
 
-    const data = (json.result?.data ?? []).map((item: any) => ({
-      objectId: item.data?.objectId,
-      version: item.data?.version,
-      digest: item.data?.digest,
-      type: item.data?.type,
-      owner: item.data?.owner?.AddressOwner || item.data?.owner,
-      content: item.data?.content?.fields,
-    }));
+    const data = (json.result?.data ?? []).map((item: any) => {
+      const fields = item.data?.content?.fields || {};
+      return {
+        fileId: item.data?.objectId,
+        blobId: fields.blob_id,
+        blobObjectId: fields.blob_object_id?.vec?.[0] || fields.blob_object_id || null,
+        checksum: fields.checksum?.vec?.[0] || fields.checksum || null,
+        sizeBytes: fields.size_bytes ? Number(fields.size_bytes) : null,
+        mimeType: fields.mime || null,
+        ownerAddress: item.data?.owner?.AddressOwner || item.data?.owner || null,
+        walrusEndEpoch: parseOptionalU64(fields.walrus_end_epoch),
+        createdAtMs: fields.created_at ? Number(fields.created_at) : null,
+        targetChain: "sui",
+      };
+    });
 
     return {
       data: data as FileMetaSearchResult[],

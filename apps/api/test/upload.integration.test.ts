@@ -16,6 +16,7 @@ process.env.FLOE_CHUNK_MIN_BYTES = "1";
 process.env.FLOE_CHUNK_DEFAULT_BYTES = "4";
 process.env.FLOE_CHUNK_MAX_BYTES = "8";
 process.env.FLOE_UPLOAD_SESSION_TTL_MS = "2000";
+process.env.FLOE_FINALIZE_STATUS_POLL_MS = "2000";
 process.env.WALRUS_AGGREGATOR_URL = "http://127.0.0.1:1";
 delete process.env.DATABASE_URL;
 
@@ -367,6 +368,48 @@ test("create persists the x-owner-address header into the upload session", async
 
   assert.equal(res.statusCode, 201);
   assert.equal(session?.owner, owner);
+});
+
+test("authenticated create still persists an explicit x-owner-address header", async () => {
+  const app = await createRouteApp({
+    async checkRateLimit() {
+      return {
+        allowed: true,
+        current: 1,
+        limit: 1000,
+        windowSeconds: 60,
+        identity: {
+          authenticated: true,
+          subject: "api-key:test",
+          method: "api_key",
+          owner: null,
+        },
+      };
+    },
+  });
+  const owner = "0xE3C6814f60429EaED1b64Bd059aeaca9bEB89aC5";
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/uploads/create",
+    routePath: "/v1/uploads/create",
+    headers: { "x-owner-address": owner },
+    body: {
+      filename: "video.mp4",
+      contentType: "video/mp4",
+      sizeBytes: 8,
+      chunkSize: 4,
+      epochs: 1,
+      targetChain: "eth",
+    },
+  });
+
+  const body = res.json();
+  const session = await sessionModule.getSession(body.uploadId);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(session?.owner, owner);
+  assert.equal(session?.targetChain, "eth");
 });
 
 afterEach(async () => {

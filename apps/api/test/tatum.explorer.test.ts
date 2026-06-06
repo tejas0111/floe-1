@@ -24,4 +24,8 @@ test("uses testnet explorers for native chain provenance links", () => {
     explorerUrlFromRecord({ targetChain: "eth_sepolia", anchorTxId: "0x5" }),
     "https://sepolia.etherscan.io/tx/0x5"
   );
+  assert.equal(
+    explorerUrlFromRecord({ targetChain: "eth", anchorTxId: "0x6" }),
+    "https://etherscan.io/tx/0x6"
+  );
 });

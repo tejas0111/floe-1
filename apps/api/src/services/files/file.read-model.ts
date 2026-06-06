@@ -45,7 +45,7 @@ function isTrustedFileObjectType(raw: unknown): boolean {
   return typeof raw === "string" && raw.toLowerCase() === TRUSTED_FILE_OBJECT_TYPE;
 }
 
-function parseOptionalU64(raw: unknown): number | null {
+export function parseOptionalU64(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
 
   if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {

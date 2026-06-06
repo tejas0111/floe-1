@@ -158,8 +158,6 @@ export async function createApiServer(params?: { authProvider?: AuthProvider }) 
     },
   });
 
-  await app.register(viewRoutes);
-
   try {
     await initRedis();
     await initS3IfEnabled(app.log);
@@ -224,6 +222,7 @@ export async function createApiServer(params?: { authProvider?: AuthProvider }) 
   if (TopologyConfig.routes.files) {
     await app.register(filesRoutes);
   }
+  await app.register(viewRoutes);
   await app.register(tatumRoutes);
   await app.register(healthRoute);
 

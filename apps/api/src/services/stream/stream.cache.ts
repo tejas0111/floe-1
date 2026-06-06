@@ -5,9 +5,9 @@ import path from "node:path";
 import { UploadConfig } from "../../config/uploads.config.js";
 import { fetchWalrusBlob } from "../walrus/read.js";
 import {
-  STREAM_CACHE_FILL_CONCURRENCY,
-  STREAM_CACHE_MAX_BYTES,
-  STREAM_CACHE_TTL_MS,
+  getStreamCacheFillConcurrency,
+  getStreamCacheMaxBytes,
+  getStreamCacheTtlMs,
   shouldCacheFullObject as shouldCacheFullObjectPolicy,
 } from "./stream.cache.policy.js";
 import {
@@ -20,9 +20,6 @@ import { writeWebBodyToFile } from "./stream.cache.io.js";
 
 export const shouldCacheFullObject = shouldCacheFullObjectPolicy;
 
-const STREAM_CACHE_DIR = path.join(UploadConfig.tmpDir, "_stream_cache");
-const STREAM_CACHE_FULL_DIR = path.join(STREAM_CACHE_DIR, "full");
-const STREAM_CACHE_RANGE_DIR = path.join(STREAM_CACHE_DIR, "ranges");
 const inFlightCacheFill = new Map<string, Promise<string | null>>();
 const inFlightRangeFill = new Map<string, Promise<string>>();
 let reservedCacheBytes = 0;
@@ -30,12 +27,28 @@ let activeCacheFills = 0;
 const pendingFillWaiters: Array<() => void> = [];
 let cacheReservationLock: Promise<void> = Promise.resolve();
 
+function streamCacheDir() {
+  return path.join(UploadConfig.tmpDir, "_stream_cache");
+}
+
+function streamCacheFullDir() {
+  return path.join(streamCacheDir(), "full");
+}
+
+function streamCacheRangeDir() {
+  return path.join(streamCacheDir(), "ranges");
+}
+
 function sanitizeBlobId(blobId: string): string {
   return blobId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function isTempCacheFile(filePath: string): boolean {
+  return path.basename(filePath).includes(".tmp-");
+}
+
 function streamCachePath(blobId: string): string {
-  return path.join(STREAM_CACHE_FULL_DIR, `${sanitizeBlobId(blobId)}.blob`);
+  return path.join(streamCacheFullDir(), `${sanitizeBlobId(blobId)}.blob`);
 }
 
 export function getStreamCachePath(blobId: string): string {
@@ -48,18 +61,18 @@ function streamRangeCacheKey(params: { blobId: string; start: number; end: numbe
 
 function streamRangeCachePath(params: { blobId: string; start: number; end: number }): string {
   return path.join(
-    STREAM_CACHE_RANGE_DIR,
+    streamCacheRangeDir(),
     sanitizeBlobId(params.blobId),
     `${params.start}-${params.end}.part`
   );
 }
 
 async function ensureStreamCacheDir() {
-  await fsp.mkdir(STREAM_CACHE_FULL_DIR, { recursive: true });
-  await fsp.mkdir(STREAM_CACHE_RANGE_DIR, { recursive: true });
+  await fsp.mkdir(streamCacheFullDir(), { recursive: true });
+  await fsp.mkdir(streamCacheRangeDir(), { recursive: true });
 }
 
-async function listCacheFiles() {
+async function scanCacheFiles(includeTempFiles: boolean) {
   const scanDir = async (dir: string) => {
     const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
     const out: Array<{ path: string; size: number; mtimeMs: number }> = [];
@@ -70,6 +83,7 @@ async function listCacheFiles() {
         continue;
       }
       if (!entry.isFile()) continue;
+      if (!includeTempFiles && isTempCacheFile(filePath)) continue;
       const stat = await fsp.stat(filePath).catch(() => null);
       if (!stat) continue;
       out.push({ path: filePath, size: stat.size, mtimeMs: stat.mtimeMs });
@@ -77,28 +91,42 @@ async function listCacheFiles() {
     return out;
   };
 
-  return scanDir(STREAM_CACHE_DIR);
+  return scanDir(streamCacheDir());
+}
+
+async function listCacheFiles() {
+  return scanCacheFiles(false);
+}
+
+async function cleanupTempCacheFiles() {
+  const files = await scanCacheFiles(true);
+  for (const file of files) {
+    if (!isTempCacheFile(file.path)) continue;
+    await fsp.rm(file.path, { force: true }).catch(() => {});
+  }
 }
 
 async function pruneStreamCacheIfNeeded() {
-  if (!Number.isFinite(STREAM_CACHE_MAX_BYTES) || STREAM_CACHE_MAX_BYTES <= 0) return;
+  const streamCacheMaxBytes = getStreamCacheMaxBytes();
+  if (!Number.isFinite(streamCacheMaxBytes) || streamCacheMaxBytes <= 0) return;
   const files = await listCacheFiles();
   let totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes <= STREAM_CACHE_MAX_BYTES) return;
+  if (totalBytes <= streamCacheMaxBytes) return;
 
   files.sort((a, b) => a.mtimeMs - b.mtimeMs);
   for (const file of files) {
     await fsp.rm(file.path, { force: true }).catch(() => {});
     recordStreamCacheEviction({ reason: "size", bytes: file.size });
     totalBytes -= file.size;
-    if (totalBytes <= STREAM_CACHE_MAX_BYTES) break;
+    if (totalBytes <= streamCacheMaxBytes) break;
   }
 }
 
 async function sweepExpiredStreamCache() {
-  if (!Number.isFinite(STREAM_CACHE_TTL_MS) || STREAM_CACHE_TTL_MS <= 0) return;
+  const streamCacheTtlMs = getStreamCacheTtlMs();
+  if (!Number.isFinite(streamCacheTtlMs) || streamCacheTtlMs <= 0) return;
   const files = await listCacheFiles();
-  const cutoff = Date.now() - STREAM_CACHE_TTL_MS;
+  const cutoff = Date.now() - streamCacheTtlMs;
   for (const file of files) {
     if (file.mtimeMs > cutoff) continue;
     await fsp.rm(file.path, { force: true }).catch(() => {});
@@ -106,16 +134,18 @@ async function sweepExpiredStreamCache() {
 }
 
 async function expireStreamCacheIfNeeded(filePath: string) {
-  if (!Number.isFinite(STREAM_CACHE_TTL_MS) || STREAM_CACHE_TTL_MS <= 0) return;
+  const streamCacheTtlMs = getStreamCacheTtlMs();
+  if (!Number.isFinite(streamCacheTtlMs) || streamCacheTtlMs <= 0) return;
   const stat = await fsp.stat(filePath).catch(() => null);
   if (!stat) return;
-  if (Date.now() - stat.mtimeMs <= STREAM_CACHE_TTL_MS) return;
+  if (Date.now() - stat.mtimeMs <= streamCacheTtlMs) return;
   await fsp.rm(filePath, { force: true }).catch(() => {});
   recordStreamCacheEviction({ reason: "ttl", bytes: stat.size });
 }
 
 export async function initStreamCache() {
   await ensureStreamCacheDir();
+  await cleanupTempCacheFiles();
   await sweepExpiredStreamCache();
   await pruneStreamCacheIfNeeded();
 }
@@ -216,6 +246,7 @@ export async function ensureCachedStreamBlob(params: {
         tempPath,
         expectedBytes: params.sizeBytes,
         truncationErrorPrefix: "STREAM_CACHE_FULL_TRUNCATED",
+        signal: params.signal,
       });
 
       await fsp.rename(tempPath, filePath).catch(async (err) => {
@@ -289,6 +320,7 @@ export async function ensureCachedStreamRange(params: {
         tempPath,
         expectedBytes: expectedSize,
         truncationErrorPrefix: "STREAM_CACHE_RANGE_TRUNCATED",
+        signal: params.signal,
       });
 
       await fsp.rename(tempPath, cachePath).catch(async (err) => {
@@ -326,14 +358,15 @@ export function createCachedReadStream(params: {
 }
 
 async function acquireCacheFillSlot(): Promise<() => void> {
+  const streamCacheFillConcurrency = getStreamCacheFillConcurrency();
   if (
-    !Number.isFinite(STREAM_CACHE_FILL_CONCURRENCY) ||
-    STREAM_CACHE_FILL_CONCURRENCY <= 0
+    !Number.isFinite(streamCacheFillConcurrency) ||
+    streamCacheFillConcurrency <= 0
   ) {
     return () => {};
   }
 
-  while (activeCacheFills >= STREAM_CACHE_FILL_CONCURRENCY) {
+  while (activeCacheFills >= streamCacheFillConcurrency) {
     await new Promise<void>((resolve) => pendingFillWaiters.push(resolve));
   }
   activeCacheFills += 1;
@@ -350,10 +383,11 @@ async function acquireCacheFillSlot(): Promise<() => void> {
 }
 
 async function reserveCacheBytes(expectedBytes: number): Promise<null | (() => void)> {
-  if (!Number.isFinite(STREAM_CACHE_MAX_BYTES) || STREAM_CACHE_MAX_BYTES <= 0) {
+  const streamCacheMaxBytes = getStreamCacheMaxBytes();
+  if (!Number.isFinite(streamCacheMaxBytes) || streamCacheMaxBytes <= 0) {
     return () => {};
   }
-  if (expectedBytes > STREAM_CACHE_MAX_BYTES) {
+  if (expectedBytes > streamCacheMaxBytes) {
     return null;
   }
 
@@ -361,7 +395,7 @@ async function reserveCacheBytes(expectedBytes: number): Promise<null | (() => v
     await pruneStreamCacheIfNeeded();
     const files = await listCacheFiles();
     const currentBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (currentBytes + reservedCacheBytes + expectedBytes > STREAM_CACHE_MAX_BYTES) {
+    if (currentBytes + reservedCacheBytes + expectedBytes > streamCacheMaxBytes) {
       return null;
     }
 

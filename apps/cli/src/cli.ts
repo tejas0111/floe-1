@@ -689,6 +689,8 @@ function printUploadResult(
     walrusEndEpoch?: number;
     walrusDebug?: { source?: string; objectId?: string };
     blobId?: string;
+    targetChain?: string;
+    anchorTxId?: string;
   },
   options: CliOptions
 ) {
@@ -703,9 +705,17 @@ function printUploadResult(
     valueLine("uploadId", value.uploadId),
     valueLine("fileId", value.fileId),
     valueLine("size", formatBytes(value.sizeBytes)),
-    valueLine("chunkSize", formatBytes(value.chunkSize)),
-    valueLine("chunks", value.totalChunks),
   ];
+
+  if (value.targetChain) {
+    pushOptionalLine(lines, "targetChain", value.targetChain);
+  }
+  if (value.anchorTxId) {
+    pushOptionalLine(lines, "anchorTxId", value.anchorTxId);
+  }
+
+  lines.push(valueLine("chunkSize", formatBytes(value.chunkSize)));
+  lines.push(valueLine("chunks", value.totalChunks));
   pushOptionalLine(lines, "walrusEndEpoch", value.walrusEndEpoch);
   if (options.includeBlobId) {
     pushOptionalLine(lines, "blobId", value.blobId);

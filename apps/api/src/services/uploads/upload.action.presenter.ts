@@ -41,6 +41,8 @@ export function buildUploadCompleteReadyResponse(params: {
           },
         }
       : {}),
+    ...(params.meta?.targetChain ? { targetChain: params.meta.targetChain } : {}),
+    ...(params.meta?.anchorTxId ? { anchorTxId: params.meta.anchorTxId } : {}),
   };
 }
 

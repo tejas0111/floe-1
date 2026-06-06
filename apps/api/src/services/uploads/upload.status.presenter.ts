@@ -18,6 +18,8 @@ export type UploadStatusResponse = {
     source?: string;
     objectId?: string;
   };
+  targetChain?: string;
+  anchorTxId?: string;
   error?: string;
 } & Record<string, unknown>;
 
@@ -53,6 +55,8 @@ export function buildUploadStatusResponse(params: {
           },
         }
       : {}),
+    ...(params.meta?.targetChain ? { targetChain: params.meta.targetChain } : {}),
+    ...(params.meta?.anchorTxId ? { anchorTxId: params.meta.anchorTxId } : {}),
     ...(params.meta?.error ? { error: params.meta.error } : {}),
     ...buildFinalizeDiagnostics(params.meta ?? undefined),
   };

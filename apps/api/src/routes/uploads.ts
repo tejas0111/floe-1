@@ -499,9 +499,7 @@ export default async function uploadRoutes(app: FastifyInstance) {
         uploadId,
         filename,
         contentType,
-        owner: createLimit.identity.authenticated
-          ? createLimit.identity.owner
-          : (requestOwner ?? DEFAULT_OWNER_ADDRESS),
+        owner: requestOwner ?? DEFAULT_OWNER_ADDRESS,
         checksum: checksumValue,
         sizeBytes: fileSizeNum,
         chunkSize: resolvedChunkSize,

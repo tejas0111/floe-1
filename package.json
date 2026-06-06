@@ -11,6 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "dev": "npm run dev --workspace=apps/api",
+    "demo": "bash ./scripts/demo.sh",
     "tatum": "npm run dev --workspace=apps/tatum",
     "dashboard": "npm run dev --workspace=apps/dashboard",
     "start": "npm run start --workspace=apps/api",

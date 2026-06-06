@@ -588,6 +588,8 @@ export class FloeClient {
         ? { walrusDebug: complete.walrusDebug }
         : {}),
       walrusEndEpoch: complete.walrusEndEpoch,
+      targetChain: complete.targetChain,
+      anchorTxId: complete.anchorTxId,
       chunkSize,
       totalChunks,
     };
@@ -701,6 +703,8 @@ export class FloeClient {
             ...(status.walrusEndEpoch !== undefined
               ? { walrusEndEpoch: status.walrusEndEpoch }
               : {}),
+            ...(status.targetChain ? { targetChain: status.targetChain } : {}),
+            ...(status.anchorTxId ? { anchorTxId: status.anchorTxId } : {}),
           };
         }
 

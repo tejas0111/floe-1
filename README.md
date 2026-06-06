@@ -1,133 +1,98 @@
-# Floe
+# Floe 🌊
 
-Floe is a file upload and read platform built around Walrus, Sui, and a Tatum-backed hackathon demo flow.
+### High-Performance Multi-Chain Bridge for Walrus Storage
 
-This `tatum` branch keeps the core upload/read pipeline from Floe, then adds chain-aware minting, provenance, and a demo UI that makes it obvious when data came from Tatum RPC versus the local Floe index.
+[![Tatum Hackathon](https://img.shields.io/badge/Hackathon-Tatum-blueviolet)](https://tatum.io)
+[![Walrus Storage](https://img.shields.io/badge/Storage-Walrus-blue)](https://walrus.xyz)
+[![Multi-Chain](https://img.shields.io/badge/Anchoring-Multi--Chain-success)](https://tatum.io)
 
-## What This Branch Does
+**Floe** is a decentralized infrastructure bridge that connects the high-efficiency storage of **Walrus (Sui)** with the massive multi-chain ecosystem via **Tatum**. It allows developers and users to store data once on Walrus and instantly anchor its provenance across 10+ blockchains including Ethereum, Base, Polygon, and more.
 
-- resumable chunk uploads for large files
-- Walrus publish/finalize for stored blobs
-- chain-aware minting for uploaded file metadata
-- Tatum-backed search/index responses with explicit `source` and `rpcProvider`
-- hackathon UI for uploads, chain selection, and provenance inspection
+---
 
-## Demo Flow
+## 🚀 The Vision
 
-1. A user starts an upload and chooses a target chain.
-2. Floe stages the chunks and finalizes the file to Walrus.
-3. The finalizer picks a mint path:
-   - **Tatum Express** for `polygon`, `bsc`, `celo`, and `ethereum`
-   - **Tatum native minting** for `base`, `arbitrum`, `optimism`, `avalanche`, and `eth_sepolia`
-4. The API stores the chain and mint provenance in the indexed file row.
-5. The Tatum search route returns `source: "tatum-gateway"` when the result comes from Tatum and `rpcProvider: "tatum"` so the UI can tell the user what was used.
+Modern dApps face a dilemma: **Decentralized storage is fragmented.** 
+- Walrus offers incredible performance and cost-efficiency but lives in its own ecosystem. 
+- Users on Base or Ethereum want to "own" their data on their native chain.
 
-## Supported Mint Paths
+**Floe solves this.** We provide the plumbing that allows a file to be sharded on Walrus while its "Soul" (metadata and ownership) is minted as a provenance-aware asset on any chain supported by Tatum.
 
-### Tatum Express
+---
 
-Use this path for the fast hackathon mint flow:
+## ✨ Key Features
 
-- `polygon` → `MATIC`
-- `bsc` / `bnb` / `binance` → `BSC`
-- `celo` / `alfajores` → `CELO`
-- `ethereum` / `eth` / `mainnet` → `ETH`
+- **⚡ Walrus-Native Pipeline:** Optimized chunked uploads with automatic sharding and storage health metrics.
+- **🔗 Universal Anchoring:** One-click provenance minting across **Base, Sepolia, Polygon, Arbitrum, Optimism, and more** using Tatum's NFT Express.
+- **🕵️ Global Discovery:** Leverages Tatum's unified indexer to search for and verify file provenance across the entire multi-chain landscape.
+- **🛠️ Developer-First:** Includes a professional **CLI**, **SDK**, and **Bash Wrapper** for seamless integration into any workflow.
+- **📊 SaaS-Grade Dashboard:** Real-time upload tracking, multi-chain status monitoring, and storage health metrics.
 
-### Tatum Native Minting
+---
 
-Use this path when the chain needs a wallet-backed mint path:
+## 🛠️ Tech Stack
 
-- `base` → `ETH_BASE`
-- `arbitrum` → `ETH_ARB`
-- `optimism` → `ETH_OP`
-- `avalanche` / `avax` → `AVAX`
-- `fantom` → `FTM`
-- `eth_sepolia` / `eth-sepolia` / `sepolia` → `ETH` with `testnetType=ethereum-sepolia`
+- **Storage:** [Walrus](https://walrus.xyz) (Decentralized Storage Protocol)
+- **Multi-Chain Connectivity:** [Tatum SDK & API](https://tatum.io)
+- **Backend:** Node.js, Express, TypeScript, Redis
+- **Frontend:** React, Tailwind CSS, Vite
+- **Infrastructure:** Docker, GitHub Actions (CI)
 
-Native minting expects:
+---
 
-- `TATUM_NATIVE_CONTRACT_ADDRESS`
-- or one of the chain-specific addresses below
-- `TATUM_TEST_PRIVATE_KEY` or `TATUM_SIGNATURE_ID`
+## 🏁 Quick Start
 
-Keep those credentials in test-only or hackathon-only environments.
-
-Per-chain overrides:
-
-- `TATUM_NATIVE_CONTRACT_ADDRESS_BASE`
-- `TATUM_NATIVE_CONTRACT_ADDRESS_OPTIMISM`
-- `TATUM_NATIVE_CONTRACT_ADDRESS_ARBITRUM`
-- `TATUM_NATIVE_CONTRACT_ADDRESS_AVALANCHE`
-- `TATUM_NATIVE_CONTRACT_ADDRESS_FANTOM`
-- `TATUM_NATIVE_CONTRACT_ADDRESS_ETH_SEPOLIA`
-
-## Local Development
-
-### Requirements
-
+### Prerequisites
 - Node.js `>=20`
 - Redis
-- Walrus aggregator access
-- Sui RPC access
-- `TATUM_API_KEY`
+- [Tatum API Key](https://dashboard.tatum.io)
+- Walrus Aggregator/Publisher access
 
-For native Tatum minting, also set:
-
-- `TATUM_NATIVE_CONTRACT_ADDRESS`
-- `TATUM_TEST_PRIVATE_KEY` or `TATUM_SIGNATURE_ID`
-
-### Install
-
+### 1. Clone & Install
 ```bash
-git clone https://github.com/floehq/floe.git
+git clone https://github.com/tejas0111/floe.git
 cd floe
 npm install
 ```
 
-### Run
-
+### 2. Environment Setup
+Copy `.env.example` to `.env` and fill in your keys:
 ```bash
-npm run dev
+TATUM_API_KEY=your_key_here
+WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.site
 ```
 
-Hackathon UIs:
-
+### 3. Launch the Demo
 ```bash
-npm run tatum
-npm run dashboard
+npm run demo
+```
+This starts the **API** (Port 3011) and the **Dashboard** (Port 3012).
+
+---
+
+## 📦 Developer Tools
+
+### CLI
+```bash
+npm install -g @floehq/cli
+floe upload my-video.mp4 --chain base
 ```
 
-### Build
+### SDK
+```typescript
+import { FloeClient } from '@floehq/sdk';
 
-```bash
-npm run build --workspace=apps/api
+const floe = new FloeClient({ apiKey: '...' });
+const result = await floe.upload(fileBuffer, { anchorChain: 'polygon' });
+console.log(`Anchored at: ${result.anchorTxId}`);
 ```
 
-### Tests
-
+### Bash Wrapper
 ```bash
-npm run test --workspace=apps/api
+./scripts/floe.sh upload test.txt --target-chain sepolia
 ```
 
-## API Notes
+---
 
-- `GET /v1/search` returns the indexed file feed.
-- Tatum-backed responses include:
-  - `source`
-  - `rpcProvider`
-- Chain metadata is stored in the indexed file row and surfaced in the dashboard.
-
-## Documentation
-
-- `docs/API.md` - API routes and response contract
-- `docs/OPERATIONS.md` - runtime model, configuration, metrics, and runbook notes
-- `npm run tatum` - hackathon demo app for uploads and provenance
-- `contracts/FloeCollection.sol` - native NFT collection template for chain-by-chain deployments
-
-## Credit
-
-Floe started as a Sui/Walrus file pipeline. This branch keeps that core and layers Tatum-backed chain minting and search on top for the hackathon demo.
-
-## License
-
-MIT (`LICENSE`)
+## 📄 License
+MIT © [Floe HQ](https://github.com/floehq)

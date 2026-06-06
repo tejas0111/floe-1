@@ -1270,6 +1270,9 @@ else
 
   FILE_ID=$(jq -r '.fileId // empty' "$FINAL_FILE" 2>/dev/null || true)
   FINAL_STATUS=$(jq -r '.status // empty' "$FINAL_FILE" 2>/dev/null || true)
+  TARGET_CHAIN_RESULT=$(jq -r '.targetChain // empty' "$FINAL_FILE" 2>/dev/null || true)
+  ANCHOR_TX_ID=$(jq -r '.anchorTxId // empty' "$FINAL_FILE" 2>/dev/null || true)
+  WALRUS_END_EPOCH=$(jq -r '.walrusEndEpoch // empty' "$FINAL_FILE" 2>/dev/null || true)
 
   if [[ -z "$FILE_ID" ]]; then
     if [[ "$HTTP" == "202" || "$FINAL_STATUS" == "finalizing" ]]; then
@@ -1419,6 +1422,15 @@ print_section "Ready"
 print_ok "Upload successful"
 ui_newline
 print_kv "File ID"       "$FILE_ID"
+if [[ -n "$TARGET_CHAIN_RESULT" ]]; then
+  print_kv "Target chain" "$TARGET_CHAIN_RESULT"
+fi
+if [[ -n "$ANCHOR_TX_ID" ]]; then
+  print_kv "Anchor Tx"    "$ANCHOR_TX_ID"
+fi
+if [[ -n "$WALRUS_END_EPOCH" ]]; then
+  print_kv "End Epoch"    "$WALRUS_END_EPOCH"
+fi
 print_kv "Transfer time" "${TRANSFER_WAIT_S}s"
 print_kv "Finalize wait" "${FINALIZE_WAIT_S}s"
 print_kv "Uploaded"      "$(numfmt --to=iec-i "$TRANSFER_BYTES_SENT")"
@@ -1430,7 +1442,6 @@ if [[ -n "$READ_API_BASE" ]]; then
   FILES_BASE="${READ_API_BASE%/}"
 fi
 print_kv "Metadata" "${FILES_BASE}/v1/files/$FILE_ID/metadata"
-print_kv "Portal"   "${FILES_BASE}/files/$FILE_ID"
 print_kv "Manifest" "${FILES_BASE}/v1/files/$FILE_ID/manifest"
 print_kv "Stream"   "${FILES_BASE}/v1/files/$FILE_ID/stream"
 

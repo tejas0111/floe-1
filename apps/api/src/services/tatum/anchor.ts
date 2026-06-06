@@ -24,6 +24,11 @@ export interface MultiChainAnchorResult {
   assetId?: string;
 }
 
+export function buildTatumMetadataUrl(blobId: string): string {
+  const baseUrl = ServerConfig.publicBaseUrl.replace(/\/$/, "");
+  return `${baseUrl}/v1/files/${blobId}/metadata.json`;
+}
+
 export function buildTatumMintRequestBody(params: {
   blobId: string;
   to: string;
@@ -58,12 +63,11 @@ export function buildTatumMintRequestBody(params: {
 }
 
 export async function anchorMetadataMultiChain(params: MultiChainAnchorParams): Promise<MultiChainAnchorResult> {
-  const baseUrl = ServerConfig.publicBaseUrl.replace(/\/$/, "");
   const mintRoute = resolveTatumMintRoute(params.chain);
 
   // The metadata URL should point to a JSON endpoint that returns the NFT metadata.
   // In Floe, we have GET /v1/files/:fileId/metadata.json for this purpose.
-  const metadataUrl = `${baseUrl}/v1/files/${params.blobId}/metadata.json`;
+  const metadataUrl = buildTatumMetadataUrl(params.blobId);
 
   if (metadataUrl.includes("localhost") || metadataUrl.includes("127.0.0.1")) {
     console.warn(`[Tatum] Warning: metadataUrl (${metadataUrl}) is on localhost. Tatum's minting service may not be able to reach it.`);

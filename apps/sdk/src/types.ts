@@ -101,6 +101,8 @@ export type UploadStatusResponse = {
   blobId?: string;
   walrusEndEpoch?: number;
   walrusDebug?: WalrusDebugInfo;
+  targetChain?: string;
+  anchorTxId?: string;
   error?: string;
 } & FinalizeDiagnostics;
 
@@ -111,6 +113,8 @@ export type CompleteUploadReadyResponse = {
   status: "ready";
   walrusEndEpoch?: number;
   walrusDebug?: WalrusDebugInfo;
+  targetChain?: string;
+  anchorTxId?: string;
 };
 
 export type CompleteUploadFinalizingResponse = {
@@ -241,6 +245,8 @@ export type UploadBlobResult = {
   blobId?: string;
   walrusEndEpoch?: number;
   walrusDebug?: WalrusDebugInfo;
+  targetChain?: string;
+  anchorTxId?: string;
   chunkSize: number;
   totalChunks: number;
 };

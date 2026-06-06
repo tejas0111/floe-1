@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTatumMintRequestBody, deriveTatumTokenId } from "../src/services/tatum/anchor.js";
+import {
+  buildTatumMetadataUrl,
+  buildTatumMintRequestBody,
+  deriveTatumTokenId,
+} from "../src/services/tatum/anchor.js";
 import { resolveTatumMintRoute } from "../src/services/tatum/mint.provider.js";
 
 test("uses fromPrivateKey for native EVM minting", () => {
@@ -43,4 +47,18 @@ test("prefers signatureId over private key", () => {
   assert.equal(body.tokenId, tokenId);
   assert.equal(body.signatureId, "sig-1");
   assert.equal(body.fromPrivateKey, undefined);
+});
+
+test("builds metadata URLs from the public API base default", () => {
+  const previous = process.env.FLOE_PUBLIC_BASE_URL;
+  try {
+    delete process.env.FLOE_PUBLIC_BASE_URL;
+    assert.equal(
+      buildTatumMetadataUrl("blob-3"),
+      "http://localhost:3001/v1/files/blob-3/metadata.json"
+    );
+  } finally {
+    if (previous === undefined) delete process.env.FLOE_PUBLIC_BASE_URL;
+    else process.env.FLOE_PUBLIC_BASE_URL = previous;
+  }
 });

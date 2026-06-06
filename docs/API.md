@@ -325,7 +325,6 @@ Response fields:
 - `explorerUrl`
 - `metadataUrl`
 - `streamUrl`
-- `fileUrl`
 - `sizeBytes`
 - `mimeType`
 - `walrusEndEpoch`

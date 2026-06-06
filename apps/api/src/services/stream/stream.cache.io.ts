@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
 
 export async function writeWebBodyToFile(params: {
@@ -8,21 +9,21 @@ export async function writeWebBodyToFile(params: {
   tempPath: string;
   expectedBytes: number;
   truncationErrorPrefix: string;
+  signal?: AbortSignal;
 }): Promise<number> {
   let bytesWritten = 0;
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const ws = fs.createWriteStream(params.tempPath, { flags: "wx" });
-      const rs = Readable.fromWeb(params.body as any);
-      rs.on("data", (chunk: Uint8Array) => {
+    const ws = fs.createWriteStream(params.tempPath, { flags: "wx" });
+    const counter = new Transform({
+      transform(chunk: Uint8Array, _encoding, callback) {
         bytesWritten += chunk.byteLength;
-      });
-      rs.once("error", reject);
-      ws.once("error", reject);
-      ws.once("finish", resolve);
-      rs.pipe(ws);
+        callback(null, chunk);
+      },
     });
+
+    const source = Readable.fromWeb(params.body as any);
+    await pipeline(source, counter, ws, { signal: params.signal });
   } catch (err) {
     await fsp.rm(params.tempPath, { force: true }).catch(() => {});
     throw err;

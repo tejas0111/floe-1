@@ -55,7 +55,11 @@ export function createTatumSearchRoutes(
           ...results,
         });
       } catch (err: any) {
-        req.log.error({ err }, "Global discovery search failed");
+        if (!chain && err.message?.includes("suix_queryObjects")) {
+          req.log.debug({ err }, "Tatum suix_queryObjects not supported, falling back to local index");
+        } else {
+          req.log.error({ err }, "Global discovery search failed");
+        }
 
         if (!chain) {
           try {

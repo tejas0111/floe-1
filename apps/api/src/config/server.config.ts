@@ -4,5 +4,5 @@ function parseOptionalStringEnv(name: string): string | undefined {
 }
 
 export const ServerConfig = {
-  publicBaseUrl: parseOptionalStringEnv("FLOE_PUBLIC_BASE_URL") || "http://localhost:3000",
+  publicBaseUrl: parseOptionalStringEnv("FLOE_PUBLIC_BASE_URL") || "http://localhost:3001",
 };

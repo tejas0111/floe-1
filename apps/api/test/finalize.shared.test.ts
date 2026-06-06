@@ -91,6 +91,26 @@ test("normalizeFinalizeFailure preserves retryability and reason codes", () => {
     reasonCode: "walrus_upload_failed",
     retryable: true,
   });
+  assert.deepEqual(
+    normalizeFinalizeFailure(
+      new Error("WALRUS_RENEW_DEPENDENCY_UNAVAILABLE: Walrus CLI is outdated. Update the Walrus client and retry.")
+    ),
+    {
+      reasonCode: "walrus_dependency_unavailable",
+      retryable: true,
+    }
+  );
+  assert.deepEqual(
+    normalizeFinalizeFailure(
+      new Error(
+        "WALRUS_RENEW_BLOB_UNAVAILABLE: Walrus blob object is no longer available. Renew cannot proceed until the asset is re-certified."
+      )
+    ),
+    {
+      reasonCode: "walrus_blob_unavailable",
+      retryable: false,
+    }
+  );
   assert.deepEqual(normalizeFinalizeFailure(new Error("walrus_unknown: read timed out")), {
     reasonCode: "walrus_unknown",
     retryable: true,

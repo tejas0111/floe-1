@@ -147,25 +147,44 @@ export async function* readWalrusByteStreamAndCache(params: {
   await fsp.mkdir(path.dirname(params.cachePath), { recursive: true });
   const writeStream = fs.createWriteStream(tempPath, { flags: "w" });
   let writtenBytes = 0;
+  let aborted = false;
+
+  const waitForDrainOrAbort = () => {
+    if (!params.signal.aborted) {
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => reject(Object.assign(new Error("AbortError"), { name: "AbortError" }));
+        params.signal.addEventListener("abort", onAbort, { once: true });
+        writeStream.once("drain", () => {
+          params.signal.removeEventListener("abort", onAbort);
+          resolve();
+        });
+        writeStream.once("error", (err) => {
+          params.signal.removeEventListener("abort", onAbort);
+          reject(err);
+        });
+      });
+    }
+
+    return Promise.reject(Object.assign(new Error("AbortError"), { name: "AbortError" }));
+  };
 
   try {
     for await (const chunk of readWalrusByteStream(params)) {
       if (params.signal.aborted) {
-        return;
+        aborted = true;
+        break;
       }
 
       if (!writeStream.write(chunk)) {
-        await new Promise<void>((resolve, reject) => {
-          writeStream.once("drain", resolve);
-          writeStream.once("error", reject);
-        });
+        await waitForDrainOrAbort();
       }
 
       writtenBytes += chunk.byteLength;
       yield chunk;
     }
 
-    if (params.signal.aborted) {
+    if (params.signal.aborted || aborted) {
+      aborted = true;
       throw Object.assign(new Error("AbortError"), { name: "AbortError" });
     }
 
@@ -179,7 +198,12 @@ export async function* readWalrusByteStreamAndCache(params: {
 
     await fsp.rename(tempPath, params.cachePath);
   } catch (err) {
-    writeStream.destroy();
+    if (aborted || (err as any)?.name === "AbortError") {
+      writeStream.end();
+      await finished(writeStream).catch(() => {});
+    } else {
+      writeStream.destroy();
+    }
     await fsp.rm(tempPath, { force: true }).catch(() => {});
     throw err;
   }

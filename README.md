@@ -96,6 +96,25 @@ A lightweight, zero-dependency script for quick uploads and integration into CI/
 - **Usage:** `./scripts/floe.sh upload test.txt --target-chain polygon`
 - [View Bash Script Source](scripts/floe.sh)
 
+## 🐳 Deployment
+
+### Docker
+Floe is container-ready. You can build and run the API with Docker:
+
+```bash
+docker build -t floe-api .
+docker run -p 3001:3001 \
+  -e TATUM_API_KEY=your_key \
+  -e WALRUS_PUBLISHER_URL=https://... \
+  floe-api
+```
+
+### Tatum SDK
+This fork includes the official `@tatumio/tatum` SDK for advanced multi-chain operations. While the core pipeline uses high-performance direct REST calls for anchoring, the SDK is available for:
+- Complex wallet management
+- Batch NFT operations
+- Advanced chain introspection
+
 ---
 
 ## 📄 License

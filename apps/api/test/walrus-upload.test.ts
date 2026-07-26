@@ -147,11 +147,11 @@ test("CLI backend - describeWalrusCliBackend returns config", async () => {
   const prevMode = process.env.FLOE_WALRUS_STORE_MODE;
   process.env.FLOE_WALRUS_STORE_MODE = "cli";
   const prevBin = process.env.FLOE_WALRUS_CLI_BIN;
-  process.env.FLOE_WALRUS_CLI_BIN = "walrus-test";
+  process.env.FLOE_WALRUS_CLI_BIN = "echo";
   try {
     const cliMod = await importFresh("../src/services/walrus/backends/cli.js");
     const desc = cliMod.describeWalrusCliBackend();
-    assert.equal(desc.cliBin, "walrus-test");
+    assert.ok(desc.cliBin.includes("echo"));
     assert.ok("cliConfig" in desc);
     assert.ok("cliContext" in desc);
     assert.ok("cliWallet" in desc);

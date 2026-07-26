@@ -16,7 +16,40 @@ export interface WalrusRenewResult {
 }
 
 const WALRUS_RENEW_CACHE_TTL_MS = 10_000;
+const MAX_CACHE_SIZE = 1000;
+const WALRUS_RENEW_CACHE_CLEANUP_INTERVAL_MS = 60_000;
 const renewResultCache = new Map<string, { result: WalrusRenewResult; expiresAt: number }>();
+
+function cacheSet(key: string, entry: { result: WalrusRenewResult; expiresAt: number }) {
+  if (renewResultCache.size >= MAX_CACHE_SIZE) {
+    const now = Date.now();
+    let oldestKey: string | null = null;
+    let oldestExpiresAt = Infinity;
+    for (const [k, v] of renewResultCache) {
+      if (v.expiresAt < now && v.expiresAt < oldestExpiresAt) {
+        oldestKey = k;
+        oldestExpiresAt = v.expiresAt;
+      }
+    }
+    if (oldestKey !== null) {
+      renewResultCache.delete(oldestKey);
+    }
+  }
+  renewResultCache.set(key, entry);
+}
+
+const cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of renewResultCache) {
+    if (entry.expiresAt < now) {
+      renewResultCache.delete(key);
+    }
+  }
+}, WALRUS_RENEW_CACHE_CLEANUP_INTERVAL_MS);
+
+export function stopRenewCacheCleanup() {
+  clearInterval(cleanupTimer);
+}
 
 const execFileAsync = promisify(execFile);
 const WALRUS_CLI_BIN = (process.env.FLOE_WALRUS_CLI_BIN ?? "walrus").trim();
@@ -68,7 +101,7 @@ export async function renewWalrusBlob(params: WalrusRenewParams): Promise<Walrus
     const state = await getWalrusBlobState(params.blobObjectId);
     const endEpoch = state.endEpoch ?? 0;
     const result: WalrusRenewResult = { endEpoch: Number(endEpoch) };
-    renewResultCache.set(cacheKey, {
+    cacheSet(cacheKey, {
       result,
       expiresAt: Date.now() + WALRUS_RENEW_CACHE_TTL_MS,
     });
@@ -79,3 +112,5 @@ export async function renewWalrusBlob(params: WalrusRenewParams): Promise<Walrus
     throw new Error(`WALRUS_RENEW_FAILED:${String(detail).slice(0, 1000)}`);
   }
 }
+
+export const __test__ = { renewResultCache, cacheSet, stopRenewCacheCleanup, MAX_CACHE_SIZE } as const;

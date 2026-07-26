@@ -1479,3 +1479,74 @@ test("publisher - describeWalrusPublisherBackend with empty env returns no URLs"
     else delete process.env.FLOE_WALRUS_SDK_BASE_URL;
   }
 });
+
+// ============================================================
+// cli.ts – resolveWalrusCliBin — existing binary
+// ============================================================
+test("cli - resolveWalrusCliBin resolves existing binary to absolute path", async () => {
+  const prevBin = process.env.FLOE_WALRUS_CLI_BIN;
+  process.env.FLOE_WALRUS_CLI_BIN = "echo";
+  try {
+    const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+    const result = await mod.resolveWalrusCliBin();
+    assert.ok(result.startsWith("/"), `Expected absolute path, got: ${result}`);
+    assert.ok(result.endsWith("/echo"), `Expected path ending in /echo, got: ${result}`);
+  } finally {
+    if (prevBin !== undefined) process.env.FLOE_WALRUS_CLI_BIN = prevBin;
+    else delete process.env.FLOE_WALRUS_CLI_BIN;
+  }
+});
+
+// ============================================================
+// cli.ts – resolveWalrusCliBin — non-existent binary
+// ============================================================
+test("cli - resolveWalrusCliBin throws for non-existent binary", async () => {
+  const prevBin = process.env.FLOE_WALRUS_CLI_BIN;
+  process.env.FLOE_WALRUS_CLI_BIN = "nonexistent-binary-12345";
+  try {
+    const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+    await assert.rejects(
+      () => mod.resolveWalrusCliBin(),
+      (err: Error) => {
+        assert.ok(err.message.includes("WALRUS_CLI_NOT_FOUND"), err.message);
+        assert.ok(err.message.includes("nonexistent-binary-12345"), err.message);
+        return true;
+      },
+    );
+  } finally {
+    if (prevBin !== undefined) process.env.FLOE_WALRUS_CLI_BIN = prevBin;
+    else delete process.env.FLOE_WALRUS_CLI_BIN;
+  }
+});
+
+// ============================================================
+// cli.ts – MAX_WALRUS_BLOB_BYTES constant
+// ============================================================
+test("cli - MAX_WALRUS_BLOB_BYTES is set to 14_600_000_000", async () => {
+  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+  assert.equal(mod.MAX_WALRUS_BLOB_BYTES, 14_600_000_000);
+});
+
+// ============================================================
+// cli.ts – validateBlobSize — valid sizes
+// ============================================================
+test("cli - validateBlobSize accepts sizes at or below limit", async () => {
+  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+  mod.validateBlobSize(0);
+  mod.validateBlobSize(1000);
+  mod.validateBlobSize(14_600_000_000);
+});
+
+// ============================================================
+// cli.ts – validateBlobSize — oversized blob
+// ============================================================
+test("cli - validateBlobSize rejects oversized blob", async () => {
+  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+  assert.throws(
+    () => mod.validateBlobSize(14_600_000_001),
+    (err: Error) => {
+      assert.ok(err.message.includes("WALRUS_BLOB_TOO_LARGE"), err.message);
+      return true;
+    },
+  );
+});

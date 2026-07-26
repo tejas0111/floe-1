@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream/promises";
+import { Transform } from "node:stream";
 import { WalrusUploadLimits } from "../../../config/walrus.config.js";
 import type { WalrusUploadParams, WalrusUploadResult } from "./types.js";
 
@@ -16,6 +17,28 @@ const WALRUS_CLI_CONFIG = process.env.FLOE_WALRUS_CLI_CONFIG?.trim() || undefine
 const WALRUS_CLI_CONTEXT = process.env.FLOE_WALRUS_CLI_CONTEXT?.trim() || undefined;
 const WALRUS_CLI_WALLET = process.env.FLOE_WALRUS_CLI_WALLET?.trim() || undefined;
 const WALRUS_CLI_UPLOAD_RELAY = process.env.FLOE_WALRUS_CLI_UPLOAD_RELAY?.trim() || undefined;
+
+export const MAX_WALRUS_BLOB_BYTES = 14_600_000_000;
+
+let resolvedCliBin: string | undefined;
+
+export async function resolveWalrusCliBin(): Promise<string> {
+  if (resolvedCliBin) return resolvedCliBin;
+  const binaryName = WALRUS_CLI_BIN;
+  try {
+    const { stdout } = await execFileAsync("which", [binaryName]);
+    resolvedCliBin = stdout.trim();
+    return resolvedCliBin;
+  } catch {
+    throw new Error(`WALRUS_CLI_NOT_FOUND:${binaryName}`);
+  }
+}
+
+export function validateBlobSize(contentLength: number): void {
+  if (contentLength > MAX_WALRUS_BLOB_BYTES) {
+    throw new Error(`WALRUS_BLOB_TOO_LARGE:${contentLength}>${MAX_WALRUS_BLOB_BYTES}`);
+  }
+}
 
 function defaultWalrusCliConfigPath(): string | undefined {
   if (WALRUS_CLI_CONFIG) return WALRUS_CLI_CONFIG;
@@ -40,58 +63,71 @@ export function describeWalrusCliBackend() {
 export async function uploadToWalrusViaCli(
   params: WalrusUploadParams,
 ): Promise<WalrusUploadResult> {
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `floe_walrus_${Date.now()}_${Math.random().toString(16).slice(2)}.bin`,
-  );
-
-  const rs = params.streamFactory();
-  const ws = createWriteStream(tmpFile);
-  await pipeline(rs, ws);
-
-  const args = ["store", tmpFile, "--epochs", String(params.epochs)];
-  const walrusConfig = defaultWalrusCliConfigPath();
-  if (walrusConfig) args.push("--config", walrusConfig);
-  if (WALRUS_CLI_CONTEXT) args.push("--context", WALRUS_CLI_CONTEXT);
-  if (WALRUS_CLI_WALLET) args.push("--wallet", WALRUS_CLI_WALLET);
-  if (WALRUS_CLI_UPLOAD_RELAY) args.push("--upload-relay", WALRUS_CLI_UPLOAD_RELAY);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "floe-walrus-"), { mode: 0o700 });
+  const tmpFile = path.join(tmpDir, `blob_${Date.now()}_${Math.random().toString(16).slice(2)}.bin`);
 
   try {
-    const { stdout, stderr } = await execFileAsync(WALRUS_CLI_BIN, args, {
-      timeout: FETCH_TIMEOUT_MS,
-      maxBuffer: 10 * 1024 * 1024,
+    const rs = params.streamFactory();
+    const ws = createWriteStream(tmpFile);
+
+    let bytesWritten = 0;
+    const sizeCheck = new Transform({
+      transform(chunk, _encoding, callback) {
+        bytesWritten += chunk.length;
+        if (bytesWritten > MAX_WALRUS_BLOB_BYTES) {
+          callback(new Error(`WALRUS_BLOB_TOO_LARGE:exceeded ${MAX_WALRUS_BLOB_BYTES} bytes`));
+          return;
+        }
+        callback(null, chunk);
+      },
     });
-    const out = `${stdout ?? ""}\n${stderr ?? ""}`;
 
-    const blobId = out.match(/Blob ID:\s*([A-Za-z0-9_-]+)/)?.[1];
-    const objectId =
-      out.match(/Sui object ID:\s*(0x[0-9a-fA-F]+)/)?.[1] ??
-      out.match(/Owned Blob registration object ID:\s*(0x[0-9a-fA-F]+)/)?.[1];
-    const endEpochRaw = out.match(/Expiry epoch \(exclusive\):\s*(\d+)/)?.[1];
-    const costRaw = out.match(/Cost \(excluding gas\):\s*([0-9]*\.?[0-9]+)/)?.[1];
+    await pipeline(rs, sizeCheck, ws);
 
-    if (!blobId) {
-      throw new Error(`WALRUS_CLI_PARSE_FAILED:${out.slice(0, 500)}`);
+    const args = ["store", tmpFile, "--epochs", String(params.epochs)];
+    const walrusConfig = defaultWalrusCliConfigPath();
+    if (walrusConfig) args.push("--config", walrusConfig);
+    if (WALRUS_CLI_CONTEXT) args.push("--context", WALRUS_CLI_CONTEXT);
+    if (WALRUS_CLI_WALLET) args.push("--wallet", WALRUS_CLI_WALLET);
+    if (WALRUS_CLI_UPLOAD_RELAY) args.push("--upload-relay", WALRUS_CLI_UPLOAD_RELAY);
+
+    try {
+      const { stdout, stderr } = await execFileAsync(WALRUS_CLI_BIN, args, {
+        timeout: FETCH_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const out = `${stdout ?? ""}\n${stderr ?? ""}`;
+
+      const blobId = out.match(/Blob ID:\s*([A-Za-z0-9_-]+)/)?.[1];
+      const objectId =
+        out.match(/Sui object ID:\s*(0x[0-9a-fA-F]+)/)?.[1] ??
+        out.match(/Owned Blob registration object ID:\s*(0x[0-9a-fA-F]+)/)?.[1];
+      const endEpochRaw = out.match(/Expiry epoch \(exclusive\):\s*(\d+)/)?.[1];
+      const costRaw = out.match(/Cost \(excluding gas\):\s*([0-9]*\.?[0-9]+)/)?.[1];
+
+      if (!blobId) {
+        throw new Error(`WALRUS_CLI_PARSE_FAILED:${out.slice(0, 500)}`);
+      }
+
+      const source = /already available and certified within Walrus/i.test(out)
+        ? "already_certified"
+        : /\(\s*1\s+newly certified\s*\)/i.test(out)
+          ? "newly_created"
+          : "unknown";
+
+      return {
+        blobId,
+        objectId,
+        endEpoch: endEpochRaw ? Number(endEpochRaw) : undefined,
+        cost: costRaw ? Number(costRaw) : undefined,
+        source,
+      };
+    } catch (err: unknown) {
+      const e = err as Record<string, unknown> | undefined;
+      const msg = e?.stderr || e?.stdout || (err instanceof Error ? err.message : null) || "WALRUS_CLI_FAILED";
+      throw new Error(`WALRUS_CLI_FAILED:${String(msg).slice(0, 1000)}`);
     }
-
-    const source = /already available and certified within Walrus/i.test(out)
-      ? "already_certified"
-      : /\(\s*1\s+newly certified\s*\)/i.test(out)
-        ? "newly_created"
-        : "unknown";
-
-    return {
-      blobId,
-      objectId,
-      endEpoch: endEpochRaw ? Number(endEpochRaw) : undefined,
-      cost: costRaw ? Number(costRaw) : undefined,
-      source,
-    };
-  } catch (err: unknown) {
-    const e = err as Record<string, unknown> | undefined;
-    const msg = e?.stderr || e?.stdout || (err instanceof Error ? err.message : null) || "WALRUS_CLI_FAILED";
-    throw new Error(`WALRUS_CLI_FAILED:${String(msg).slice(0, 1000)}`);
   } finally {
-    await fs.rm(tmpFile, { force: true }).catch(() => {});
+    await fs.rm(tmpDir, { force: true, recursive: true }).catch(() => {});
   }
 }

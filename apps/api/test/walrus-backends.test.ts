@@ -485,6 +485,29 @@ test("publisher - describeWalrusPublisherBackend returns correct shape", async (
 });
 
 // ============================================================
+// publisher.ts – createAuthHeaders — nonce
+// ============================================================
+test("publisher - createAuthHeaders includes nonce and signature changes with each call", async () => {
+  const { Ed25519Keypair } = await import("@mysten/sui/keypairs/ed25519");
+  const kp = new Ed25519Keypair();
+  const mockSigner = {
+    address: kp.getPublicKey().toSuiAddress(),
+    signPersonalMessage: (msg: Uint8Array) => kp.signPersonalMessage(msg),
+  } as any;
+
+  const mod = await import("../src/services/walrus/backends/publisher.js?t=" + Date.now());
+
+  const headers1 = await mod.createAuthHeaders(mockSigner, "https://publisher.test");
+  const headers2 = await mod.createAuthHeaders(mockSigner, "https://publisher.test");
+
+  assert.ok(headers1["X-Sui-Nonce"]);
+  assert.ok(headers2["X-Sui-Nonce"]);
+  assert.notEqual(headers1["X-Sui-Nonce"], headers2["X-Sui-Nonce"]);
+  assert.notEqual(headers1["X-Sui-Signature"], headers2["X-Sui-Signature"]);
+  assert.equal(headers1["X-Sui-Address"], mockSigner.address);
+});
+
+// ============================================================
 // publisher.ts – uploadToWalrusViaPublisher — no URLs configured
 // ============================================================
 test("publisher - uploadToWalrusViaPublisher throws when no URLs configured", async () => {

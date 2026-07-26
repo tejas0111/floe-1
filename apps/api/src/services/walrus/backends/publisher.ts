@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { toB64 } from "@mysten/sui/utils";
 import { nodeToWeb } from "../../../utils/nodeToWeb.js";
 import { getSuiNetwork, getSuiSigner } from "../../../state/sui.js";
@@ -136,19 +137,24 @@ async function checkBalanceOnce() {
   lastBalanceCheck = now;
 }
 
-async function createAuthHeaders(
+/**
+ * @internal exported for testing only
+ */
+export async function createAuthHeaders(
   signer: SuiSigner,
   apiBaseUrl: string,
 ): Promise<Record<string, string>> {
   const address = signer.address;
   const timestamp = Date.now();
-  const msg = `${apiBaseUrl}:${address}:${timestamp}`;
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const msg = `${apiBaseUrl}:${address}:${timestamp}:${nonce}`;
 
   const sig = await signer.signPersonalMessage(new TextEncoder().encode(msg));
 
   return {
     "X-Sui-Address": address,
     "X-Sui-Timestamp": String(timestamp),
+    "X-Sui-Nonce": nonce,
     "X-Sui-Signature": toB64(Uint8Array.from(sig.signature)),
   };
 }

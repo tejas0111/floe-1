@@ -190,10 +190,31 @@ export function validateConfig(): ConfigValidationResult {
     }
   }
 
+  // -- CLI config warning on mainnet --
+  const floeNetwork = process.env.FLOE_NETWORK?.trim().toLowerCase();
+  if (
+    floeNetwork === "mainnet" &&
+    (walrusStoreMode === "cli") &&
+    !process.env.FLOE_WALRUS_CLI_CONFIG?.trim()
+  ) {
+    warnings.push(
+      "WARNING: FLOE_WALRUS_STORE_MODE=cli on mainnet without FLOE_WALRUS_CLI_CONFIG. " +
+      "The walrus CLI will use its default config path, which may not exist."
+    );
+  }
+
   // -- Upload tmp dir --
   const tmpDir = requireEnv("UPLOAD_TMP_DIR");
   if (!tmpDir) {
     warnings.push("UPLOAD_TMP_DIR is not set; disk chunk store will use default");
+  }
+
+  // -- KMS-in-production warning --
+  if (nodeEnv === "production" && signerBackend !== "kms") {
+    warnings.push(
+      "WARNING: Running in production with env-based signer (FLOE_SIGNER_BACKEND=env). " +
+      "Consider using FLOE_SIGNER_BACKEND=kms for production deployments."
+    );
   }
 
   return {

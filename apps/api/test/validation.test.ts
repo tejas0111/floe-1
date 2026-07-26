@@ -251,3 +251,64 @@ describe("validateConfig — publisher max-body-size warning", () => {
       assert.ok(!result.warnings.some((w) => w.includes("--max-body-size")));
     }));
 });
+
+describe("validateConfig — KMS in production", () => {
+  it("warns when NODE_ENV=production and FLOE_SIGNER_BACKEND=env", () =>
+    withRequiredEnv(() => {
+      process.env.NODE_ENV = "production";
+      process.env.FLOE_SIGNER_BACKEND = "env";
+      const result = validateConfig();
+      assert.equal(result.valid, true);
+      assert.ok(result.warnings.some((w) => w.includes("FLOE_SIGNER_BACKEND=kms")));
+    }));
+
+  it("does not warn when NODE_ENV=production and FLOE_SIGNER_BACKEND=kms", () =>
+    withRequiredEnv(() => {
+      process.env.NODE_ENV = "production";
+      process.env.FLOE_SIGNER_BACKEND = "kms";
+      process.env.FLOE_KMS_KEY_ID = "alias/test-key";
+      process.env.FLOE_SIGNER_ADDRESS = "0x0000000000000000000000000000000000000000000000000000000000000000";
+      const result = validateConfig();
+      assert.equal(result.valid, true);
+      assert.ok(!result.warnings.some((w) => w.includes("FLOE_SIGNER_BACKEND=kms")));
+    }));
+
+  it("does not warn when not in production", () =>
+    withRequiredEnv(() => {
+      process.env.NODE_ENV = "development";
+      process.env.FLOE_SIGNER_BACKEND = "env";
+      const result = validateConfig();
+      assert.equal(result.valid, true);
+      assert.ok(!result.warnings.some((w) => w.includes("FLOE_SIGNER_BACKEND=kms")));
+    }));
+});
+
+describe("validateConfig — CLI config on mainnet", () => {
+  it("warns when FLOE_NETWORK=mainnet and FLOE_WALRUS_STORE_MODE=cli without FLOE_WALRUS_CLI_CONFIG", () =>
+    withRequiredEnv(() => {
+      process.env.FLOE_NETWORK = "mainnet";
+      process.env.FLOE_WALRUS_STORE_MODE = "cli";
+      delete process.env.FLOE_WALRUS_CLI_CONFIG;
+      const result = validateConfig();
+      assert.equal(result.valid, true);
+      assert.ok(result.warnings.some((w) => w.includes("FLOE_WALRUS_CLI_CONFIG")));
+    }));
+
+  it("does not warn on testnet with cli mode", () =>
+    withRequiredEnv(() => {
+      process.env.FLOE_NETWORK = "testnet";
+      process.env.FLOE_WALRUS_STORE_MODE = "cli";
+      delete process.env.FLOE_WALRUS_CLI_CONFIG;
+      const result = validateConfig();
+      assert.ok(!result.warnings.some((w) => w.includes("FLOE_WALRUS_CLI_CONFIG")));
+    }));
+
+  it("does not warn when FLOE_WALRUS_CLI_CONFIG is explicitly set on mainnet", () =>
+    withRequiredEnv(() => {
+      process.env.FLOE_NETWORK = "mainnet";
+      process.env.FLOE_WALRUS_STORE_MODE = "cli";
+      process.env.FLOE_WALRUS_CLI_CONFIG = "/etc/walrus/config.yaml";
+      const result = validateConfig();
+      assert.ok(!result.warnings.some((w) => w.includes("FLOE_WALRUS_CLI_CONFIG")));
+    }));
+});

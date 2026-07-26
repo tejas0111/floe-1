@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
@@ -20,25 +20,18 @@ const WALRUS_CLI_UPLOAD_RELAY = process.env.FLOE_WALRUS_CLI_UPLOAD_RELAY?.trim()
 
 export const MAX_WALRUS_BLOB_BYTES = 14_600_000_000;
 
-let resolvedCliBin: string | undefined;
-
-export async function resolveWalrusCliBin(): Promise<string> {
-  if (resolvedCliBin) return resolvedCliBin;
+export function resolveWalrusCliBin(): string {
   const binaryName = WALRUS_CLI_BIN;
   try {
-    const { stdout } = await execFileAsync("which", [binaryName]);
-    resolvedCliBin = stdout.trim();
-    return resolvedCliBin;
+    const resolved = execFileSync("which", [binaryName], { encoding: "utf8", timeout: 5000 }).trim();
+    if (!resolved) throw new Error("empty");
+    return resolved;
   } catch {
     throw new Error(`WALRUS_CLI_NOT_FOUND:${binaryName}`);
   }
 }
 
-export function validateBlobSize(contentLength: number): void {
-  if (contentLength > MAX_WALRUS_BLOB_BYTES) {
-    throw new Error(`WALRUS_BLOB_TOO_LARGE:${contentLength}>${MAX_WALRUS_BLOB_BYTES}`);
-  }
-}
+const resolvedCliBin = resolveWalrusCliBin();
 
 function defaultWalrusCliConfigPath(): string | undefined {
   if (WALRUS_CLI_CONFIG) return WALRUS_CLI_CONFIG;
@@ -52,7 +45,7 @@ function defaultWalrusCliConfigPath(): string | undefined {
 
 export function describeWalrusCliBackend() {
   return {
-    cliBin: WALRUS_CLI_BIN,
+    cliBin: resolvedCliBin,
     cliConfig: defaultWalrusCliConfigPath() ?? null,
     cliContext: WALRUS_CLI_CONTEXT ?? null,
     cliWallet: WALRUS_CLI_WALLET ?? null,
@@ -71,6 +64,8 @@ export async function uploadToWalrusViaCli(
     const ws = createWriteStream(tmpFile);
 
     let bytesWritten = 0;
+    // Readable streams don't expose content-length, so a Transform-based
+    // approach is used to count bytes inline and enforce the size limit.
     const sizeCheck = new Transform({
       transform(chunk, _encoding, callback) {
         bytesWritten += chunk.length;
@@ -92,7 +87,7 @@ export async function uploadToWalrusViaCli(
     if (WALRUS_CLI_UPLOAD_RELAY) args.push("--upload-relay", WALRUS_CLI_UPLOAD_RELAY);
 
     try {
-      const { stdout, stderr } = await execFileAsync(WALRUS_CLI_BIN, args, {
+      const { stdout, stderr } = await execFileAsync(resolvedCliBin, args, {
         timeout: FETCH_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024,
       });

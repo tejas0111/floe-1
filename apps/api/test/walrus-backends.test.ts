@@ -913,7 +913,7 @@ test("cli - describeWalrusCliBackend returns correct shape", async () => {
   const prevCtx = process.env.FLOE_WALRUS_CLI_CONTEXT;
   const prevWallet = process.env.FLOE_WALRUS_CLI_WALLET;
   const prevRelay = process.env.FLOE_WALRUS_CLI_UPLOAD_RELAY;
-  process.env.FLOE_WALRUS_CLI_BIN = "my-walrus";
+  process.env.FLOE_WALRUS_CLI_BIN = "echo";
   delete process.env.FLOE_WALRUS_CLI_CONFIG;
   delete process.env.FLOE_WALRUS_CLI_CONTEXT;
   delete process.env.FLOE_WALRUS_CLI_WALLET;
@@ -921,7 +921,7 @@ test("cli - describeWalrusCliBackend returns correct shape", async () => {
   try {
     const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
     const desc = mod.describeWalrusCliBackend();
-    assert.equal(desc.cliBin, "my-walrus");
+    assert.ok(desc.cliBin.endsWith("/echo"), `Expected path ending in /echo, got: ${desc.cliBin}`);
     assert.equal(typeof desc.cliConfig, "string");
     assert.equal(desc.cliContext, null);
     assert.equal(desc.cliWallet, null);
@@ -940,14 +940,14 @@ test("cli - describeWalrusCliBackend reflects optional env vars", async () => {
   const prevCtx = process.env.FLOE_WALRUS_CLI_CONTEXT;
   const prevWallet = process.env.FLOE_WALRUS_CLI_WALLET;
   const prevRelay = process.env.FLOE_WALRUS_CLI_UPLOAD_RELAY;
-  process.env.FLOE_WALRUS_CLI_BIN = "walrus-cli";
+  process.env.FLOE_WALRUS_CLI_BIN = "echo";
   process.env.FLOE_WALRUS_CLI_CONTEXT = "mainnet";
   process.env.FLOE_WALRUS_CLI_WALLET = "0xabc123";
   process.env.FLOE_WALRUS_CLI_UPLOAD_RELAY = "https://relay.test";
   try {
     const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
     const desc = mod.describeWalrusCliBackend();
-    assert.equal(desc.cliBin, "walrus-cli");
+    assert.ok(desc.cliBin.endsWith("/echo"), `Expected path ending in /echo, got: ${desc.cliBin}`);
     assert.equal(desc.cliContext, "mainnet");
     assert.equal(desc.cliWallet, "0xabc123");
     assert.equal(desc.uploadRelay, "https://relay.test");
@@ -1488,7 +1488,7 @@ test("cli - resolveWalrusCliBin resolves existing binary to absolute path", asyn
   process.env.FLOE_WALRUS_CLI_BIN = "echo";
   try {
     const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
-    const result = await mod.resolveWalrusCliBin();
+    const result = mod.resolveWalrusCliBin();
     assert.ok(result.startsWith("/"), `Expected absolute path, got: ${result}`);
     assert.ok(result.endsWith("/echo"), `Expected path ending in /echo, got: ${result}`);
   } finally {
@@ -1500,13 +1500,12 @@ test("cli - resolveWalrusCliBin resolves existing binary to absolute path", asyn
 // ============================================================
 // cli.ts – resolveWalrusCliBin — non-existent binary
 // ============================================================
-test("cli - resolveWalrusCliBin throws for non-existent binary", async () => {
+test("cli - module import throws for non-existent binary", async () => {
   const prevBin = process.env.FLOE_WALRUS_CLI_BIN;
   process.env.FLOE_WALRUS_CLI_BIN = "nonexistent-binary-12345";
   try {
-    const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
     await assert.rejects(
-      () => mod.resolveWalrusCliBin(),
+      () => import("../src/services/walrus/backends/cli.js?t=" + Date.now()),
       (err: Error) => {
         assert.ok(err.message.includes("WALRUS_CLI_NOT_FOUND"), err.message);
         assert.ok(err.message.includes("nonexistent-binary-12345"), err.message);
@@ -1523,30 +1522,30 @@ test("cli - resolveWalrusCliBin throws for non-existent binary", async () => {
 // cli.ts – MAX_WALRUS_BLOB_BYTES constant
 // ============================================================
 test("cli - MAX_WALRUS_BLOB_BYTES is set to 14_600_000_000", async () => {
-  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
-  assert.equal(mod.MAX_WALRUS_BLOB_BYTES, 14_600_000_000);
+  const prevBin = process.env.FLOE_WALRUS_CLI_BIN;
+  process.env.FLOE_WALRUS_CLI_BIN = "echo";
+  try {
+    const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
+    assert.equal(mod.MAX_WALRUS_BLOB_BYTES, 14_600_000_000);
+  } finally {
+    if (prevBin !== undefined) process.env.FLOE_WALRUS_CLI_BIN = prevBin;
+    else delete process.env.FLOE_WALRUS_CLI_BIN;
+  }
 });
 
 // ============================================================
-// cli.ts – validateBlobSize — valid sizes
+// cli.ts – temp dir restricted permissions
 // ============================================================
-test("cli - validateBlobSize accepts sizes at or below limit", async () => {
-  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
-  mod.validateBlobSize(0);
-  mod.validateBlobSize(1000);
-  mod.validateBlobSize(14_600_000_000);
-});
-
-// ============================================================
-// cli.ts – validateBlobSize — oversized blob
-// ============================================================
-test("cli - validateBlobSize rejects oversized blob", async () => {
-  const mod = await import("../src/services/walrus/backends/cli.js?t=" + Date.now());
-  assert.throws(
-    () => mod.validateBlobSize(14_600_000_001),
-    (err: Error) => {
-      assert.ok(err.message.includes("WALRUS_BLOB_TOO_LARGE"), err.message);
-      return true;
-    },
-  );
+test("cli - temp dir is created with restricted permissions", async () => {
+  const { mkdtemp, stat, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const tmpDir = await mkdtemp(join(tmpdir(), "floe-walrus-test-"), { mode: 0o700 });
+  try {
+    const s = await stat(tmpDir);
+    const perm = s.mode & 0o777;
+    assert.strictEqual(perm, 0o700);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 });

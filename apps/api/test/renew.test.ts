@@ -1,6 +1,8 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
+process.env.FLOE_WALRUS_CLI_BIN = process.env.FLOE_WALRUS_CLI_BIN ?? "echo";
+
 const mod = await import("../src/services/walrus/renew.js");
 const { __test__ } = mod;
 const { renewResultCache, cacheSet, stopRenewCacheCleanup, MAX_CACHE_SIZE } = __test__;

@@ -31,7 +31,7 @@ export function resolveWalrusCliBin(): string {
   }
 }
 
-const resolvedCliBin = resolveWalrusCliBin();
+export const resolvedCliBin = resolveWalrusCliBin();
 
 function defaultWalrusCliConfigPath(): string | undefined {
   if (WALRUS_CLI_CONFIG) return WALRUS_CLI_CONFIG;

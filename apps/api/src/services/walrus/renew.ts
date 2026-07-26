@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { WalrusUploadLimits } from "../../config/walrus.config.js";
 import { getWalrusBlobState } from "./blob.js";
+import { resolvedCliBin } from "./backends/cli.js";
 
 export interface WalrusRenewParams {
   blobObjectId: string;
@@ -46,13 +47,13 @@ const cleanupTimer = setInterval(() => {
     }
   }
 }, WALRUS_RENEW_CACHE_CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
 
 export function stopRenewCacheCleanup() {
   clearInterval(cleanupTimer);
 }
 
 const execFileAsync = promisify(execFile);
-const WALRUS_CLI_BIN = (process.env.FLOE_WALRUS_CLI_BIN ?? "walrus").trim();
 const WALRUS_CLI_WALLET = process.env.FLOE_WALRUS_CLI_WALLET?.trim() || undefined;
 const WALRUS_CLI_CONTEXT = process.env.FLOE_WALRUS_CLI_CONTEXT?.trim() || undefined;
 
@@ -93,7 +94,7 @@ export async function renewWalrusBlob(params: WalrusRenewParams): Promise<Walrus
   if (WALRUS_CLI_WALLET) args.push("--wallet", WALRUS_CLI_WALLET);
 
   try {
-    await execFileAsync(WALRUS_CLI_BIN, args, {
+    await execFileAsync(resolvedCliBin, args, {
       timeout: WalrusUploadLimits.timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
     });

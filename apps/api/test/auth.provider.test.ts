@@ -36,6 +36,7 @@ const { AuthProviderConfig } = await import("../src/config/auth.config.ts");
 const { AuthTokenConfig } = await import("../src/config/auth.config.ts");
 const { AuthExternalConfig } = await import("../src/config/auth.config.ts");
 const { AuthApiKeyConfig } = await import("../src/config/auth.config.ts");
+const { AuthOwnerPolicyConfig } = await import("../src/config/auth.config.ts");
 const { createDefaultAuthProvider } = await import("../src/services/auth/auth.provider.ts");
 const { signDelegatedAuthTokenForTests } = await import("../src/services/auth/auth.token.ts");
 const { externalAuthTestHooks } = await import("../src/services/auth/auth.external.ts");
@@ -65,6 +66,7 @@ afterEach(() => {
   (AuthApiKeyConfig as Record<string, unknown>)["keys"] = JSON.parse(
     process.env.FLOE_API_KEYS_JSON!,
   );
+  (AuthOwnerPolicyConfig as Record<string, unknown>)["enforceUploadOwner"] = false;
   globalThis.fetch = originalFetch;
   externalAuthTestHooks.resetCache();
 });
@@ -158,6 +160,33 @@ test("wildcard scopes retain full access", async () => {
 
   assert.deepEqual(upload, { allowed: true });
   assert.deepEqual(file, { allowed: true });
+});
+
+test("authenticated user cannot access owner-less upload when owner enforcement is on", async () => {
+  (AuthOwnerPolicyConfig as Record<string, unknown>)["enforceUploadOwner"] = true;
+  const req = makeReq({ "x-api-key": "all-access-secret" });
+
+  const result = await provider.authorizeUploadAccess({
+    req,
+    action: "status",
+  });
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "OWNER_MISMATCH");
+  assert.equal(result.message, "Upload owner mismatch");
+});
+
+test("unauthenticated user can access owner-less upload when owner enforcement is on", async () => {
+  (AuthModeConfig as Record<string, unknown>)["mode"] = "public";
+  (AuthOwnerPolicyConfig as Record<string, unknown>)["enforceUploadOwner"] = true;
+  const req = makeReq();
+
+  const result = await provider.authorizeUploadAccess({
+    req,
+    action: "status",
+  });
+
+  assert.deepEqual(result, { allowed: true });
 });
 
 test("none provider remains valid for public deployments", async () => {

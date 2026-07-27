@@ -106,7 +106,16 @@ class DefaultAuthProvider implements AuthProvider {
     }
     if (!AuthOwnerPolicyConfig.enforceUploadOwner) return { allowed: true };
     const expected = params.uploadOwner?.trim();
-    if (!expected) return { allowed: true };
+    if (!expected) {
+      if (base.identity.authenticated) {
+        return {
+          allowed: false,
+          code: "OWNER_MISMATCH",
+          message: "Upload owner mismatch",
+        };
+      }
+      return { allowed: true };
+    }
     const owner = base.identity.owner?.trim();
     if (!owner || owner.toLowerCase() !== expected.toLowerCase()) {
       return {

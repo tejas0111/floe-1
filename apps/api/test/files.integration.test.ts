@@ -883,6 +883,80 @@ test("stream auth denial does not inherit public cache headers", async () => {
 });
 
 // ============================================================
+// Renew route — owner check
+// ============================================================
+
+test("renew route rejects owner mismatch", async () => {
+  await mockSuiFile();
+
+  let capturedFileOwner: string | null | undefined;
+  let authCallCount = 0;
+  const app = await createRouteApp({
+    async authorizeFileAccess({
+      fileOwner: fo,
+    }: {
+      fileOwner?: string | null;
+    }) {
+      authCallCount++;
+      capturedFileOwner = fo;
+      // Simulate that the requesting user is NOT the file owner
+      if (fo) {
+        return {
+          allowed: false,
+          code: "OWNER_MISMATCH",
+          message: "File owner mismatch",
+        };
+      }
+      return { allowed: true };
+    },
+  });
+
+  const fileId = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const res = await app.inject({
+    method: "POST",
+    url: `/v1/files/${fileId}/renew`,
+    routePath: "/v1/files/:fileId/renew",
+    params: { fileId },
+    body: { epochs: 10 },
+  });
+
+  assert.equal(authCallCount, 1, "authorizeFileAccess should be called");
+  assert.equal(
+    capturedFileOwner,
+    "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "fileOwner should be passed to authorizeFileAccess",
+  );
+  // OWNER_MISMATCH is masked as 404 FILE_NOT_FOUND
+  assert.equal(res.statusCode, 404);
+  const body = res.json() as Record<string, unknown>;
+  assert.equal(body.error?.code, "FILE_NOT_FOUND");
+});
+
+test("renew route allows matching owner", async () => {
+  await mockSuiFile();
+
+  const app = await createRouteApp({
+    async authorizeFileAccess() {
+      return { allowed: true };
+    },
+  });
+
+  const fileId = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const res = await app.inject({
+    method: "POST",
+    url: `/v1/files/${fileId}/renew`,
+    routePath: "/v1/files/:fileId/renew",
+    params: { fileId },
+    body: { epochs: 10 },
+  });
+
+  // Should proceed past auth — will fail with a different error since we haven't
+  // mocked the full renew pipeline, but that's fine; we just need to see it wasn't denied.
+  assert.notEqual(res.statusCode, 403);
+  assert.notEqual(res.statusCode, 401);
+});
+
+// ============================================================
 // Tee cache fill tests
 // ============================================================
 

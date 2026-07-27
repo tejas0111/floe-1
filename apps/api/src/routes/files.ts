@@ -783,15 +783,6 @@ export async function filesRoutes(app: FastifyInstance) {
         );
       }
 
-      const authz = await req.server.authProvider.authorizeFileAccess({
-        req,
-        action: "renew",
-        fileId,
-      });
-      if (!authz.allowed) {
-        return sendFileAccessDenied(res, authz);
-      }
-
       const { fields } = await getFileFieldsCached(fileId);
       if (!fields) {
         return sendApiError(res, 404, "FILE_NOT_FOUND", "File not found");
@@ -800,6 +791,16 @@ export async function filesRoutes(app: FastifyInstance) {
       const normalized = normalizeFileFields(fields);
       if (!normalized) {
         return sendApiError(res, 502, "INVALID_FILE_METADATA", "File metadata is invalid");
+      }
+
+      const authz = await req.server.authProvider.authorizeFileAccess({
+        req,
+        action: "renew",
+        fileId,
+        fileOwner: normalized.ownerAddress,
+      });
+      if (!authz.allowed) {
+        return sendFileAccessDenied(res, authz);
       }
 
       // Walrus renewal requires a Blob object ID.

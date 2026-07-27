@@ -31,6 +31,8 @@ process.env.FLOE_ENFORCE_UPLOAD_OWNER = "false";
 type RedisModule = typeof import("../src/state/redis.ts");
 type SessionModule = typeof import("../src/services/uploads/session.ts");
 type UploadRoutesModule = typeof import("../src/routes/uploads.ts");
+type StoreModule = typeof import("../src/store/index.ts");
+type KeysModule = typeof import("../src/state/keys.ts");
 
 let redisProcess: ChildProcess | null = null;
 let redisModule: RedisModule;
@@ -353,4 +355,41 @@ test("POST /v1/uploads/:uploadId/complete - rejects non-existent upload", async 
 
   assert.equal(res.statusCode, 404);
   assert.equal(body.error.code, "UPLOAD_NOT_FOUND");
+});
+
+test("PUT /v1/uploads/:uploadId/chunk/:index - does not remove pre-existing chunk when upload no longer active", async () => {
+  const app = await createRouteApp();
+  const uploadId = await seedUpload({ totalChunks: 2, chunkSize: 4, sizeBytes: 8 });
+
+  const res1 = await app.inject({
+    method: "PUT",
+    url: `/v1/uploads/${uploadId}/chunk/0`,
+    routePath: "/v1/uploads/:uploadId/chunk/:index",
+    params: { uploadId, index: "0" },
+    headers: { "x-chunk-sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+    filePart: makeFilePart(Buffer.from("test")),
+  });
+  assert.equal(res1.statusCode, 200);
+
+  const storeModule: StoreModule = await import("../src/store/index");
+  const keysModule: KeysModule = await import("../src/state/keys");
+  const redis = redisModule.getRedis();
+  assert.equal(await storeModule.chunkStore.hasChunk(uploadId, 0), true);
+  assert.equal(await redis.sismember(keysModule.uploadKeys.chunks(uploadId), "0"), 1);
+
+  await redis.hset(keysModule.uploadKeys.meta(uploadId), { status: "finalizing" });
+
+  const res2 = await app.inject({
+    method: "PUT",
+    url: `/v1/uploads/${uploadId}/chunk/0`,
+    routePath: "/v1/uploads/:uploadId/chunk/:index",
+    params: { uploadId, index: "0" },
+    headers: { "x-chunk-sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+    filePart: makeFilePart(Buffer.from("test")),
+  });
+  assert.equal(res2.statusCode, 200);
+  assert.equal((res2.json() as { reused?: boolean }).reused, true);
+
+  assert.equal(await storeModule.chunkStore.hasChunk(uploadId, 0), true);
+  assert.equal(await redis.sismember(keysModule.uploadKeys.chunks(uploadId), "0"), 1);
 });

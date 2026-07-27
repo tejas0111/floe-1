@@ -950,7 +950,7 @@ export default async function uploadRoutes(app: FastifyInstance) {
           touchUploadActivity({ uploadId, chunkIndex: idx }),
         );
         if (persisted === REDIS_DEPENDENCY_UNAVAILABLE) return;
-        if (!persisted) {
+        if (!persisted && !writeResult.alreadyExisted) {
           await Promise.all([
             redis.srem(uploadKeys.chunks(uploadId), String(idx)).catch(() => {}),
             chunkStore.removeChunk(uploadId, idx).catch(() => {}),

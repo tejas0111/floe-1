@@ -1594,6 +1594,15 @@ export default async function uploadRoutes(app: FastifyInstance) {
       );
       if (loaded === REDIS_DEPENDENCY_UNAVAILABLE) return;
       const [session, meta, hasLock, isFinalizePending] = loaded;
+
+      if (hasLock || meta?.status === "finalizing" || isFinalizePending === 1) {
+        reply.header("Retry-After", finalizePollRetryAfterSeconds());
+        return sendApiError(
+          reply, 409, "UPLOAD_FINALIZATION_IN_PROGRESS",
+          "Upload is currently finalizing",
+        );
+      }
+
       const expired = await guardRedisDependency(reply, () =>
         expireUploadIfNeeded({ uploadId, session, meta }),
       );
@@ -1641,16 +1650,6 @@ export default async function uploadRoutes(app: FastifyInstance) {
         );
         if (replay === REDIS_DEPENDENCY_UNAVAILABLE) return;
         if (replay === "replayed" || replay === "conflict") return;
-      }
-
-      if (hasLock || currentMeta?.status === "finalizing" || isFinalizePending === 1) {
-        reply.header("Retry-After", finalizePollRetryAfterSeconds());
-        return sendApiError(
-          reply,
-          409,
-          "UPLOAD_FINALIZATION_IN_PROGRESS",
-          "Upload is currently finalizing",
-        );
       }
 
       const status = currentMeta?.status;
